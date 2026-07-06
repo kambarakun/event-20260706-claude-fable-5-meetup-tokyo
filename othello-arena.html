@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Othello AI League Arena</title>
+<!--
+  Othello AI League Arena — 単一HTMLファイル。ダブルクリックで起動。外部依存ゼロ。
+
+  AIの貼り込み方法:
+    下のscript要素内の PLAYERS の各スロット (fable / opus / sonnet / haiku) の関数を、
+    各モデルが書いた decideMove で丸ごと置き換える。
+
+  固定契約(変更禁止):
+    function decideMove(board, myColor, legalMoves) => legalMoves の中の1要素を返す
+    - board: 8x8 二次元配列 (0=空, 1=黒, 2=白)。エンジンがディープコピーを渡すため改竄不可。
+    - myColor: 1 または 2
+    - legalMoves: [{row, col}, ...] 非空が保証される(パスはエンジンが処理)
+    違反(legalMoves外の値 / 例外 / 100ms超過 / 不正型)は「反則」となり、
+    ランダム合法手に置換して続行、反則カウント+1(反則負けにはならない)。
+-->
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;margin:16px;background:#fafafa;color:#222}
+  h1{font-size:20px;margin:0 0 10px}
+  h3{font-size:15px;margin:12px 0 4px}
+  #testSummary{font-weight:bold;padding:6px 10px;border-radius:4px;margin:4px 0;display:inline-block}
+  #testSummary.pass{background:#2e9e2e;color:#fff}
+  #testSummary.fail{background:#c22;color:#fff}
+  .test{padding:3px 8px;margin:2px 0;border-radius:4px;font-size:13px}
+  .test.pass{background:#d9f2d9;color:#155715}
+  .test.fail{background:#f8d7d7;color:#911}
+  #seedRow{margin:10px 0;font-size:14px}
+  .layout{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;margin-top:8px}
+  #board{display:grid;grid-template-columns:repeat(8,44px);grid-template-rows:repeat(8,44px);gap:1px;background:#1c4a2f;border:3px solid #1c4a2f;width:max-content}
+  .cell{background:#2e8b57;position:relative;display:flex;align-items:center;justify-content:center}
+  .disc{width:34px;height:34px;border-radius:50%}
+  .disc.b{background:#111}
+  .disc.w{background:#f5f5f5;border:1px solid #999;box-sizing:border-box}
+  .cell.last::after{content:"";position:absolute;width:8px;height:8px;background:#e33;border-radius:50%;right:3px;top:3px}
+  .cell.flip .disc{box-shadow:0 0 0 3px #ffd54a}
+  #status{margin:8px 0;font-size:14px;min-height:20px;max-width:400px}
+  table{border-collapse:collapse;font-size:13px;background:#fff}
+  th,td{border:1px solid #bbb;padding:3px 9px;text-align:center}
+  button{margin:2px;padding:4px 10px;cursor:pointer}
+  button.speed.on{background:#333;color:#fff}
+  #matches{padding-left:22px;margin:6px 0}
+  #matches li{margin:3px 0;font-size:13px}
+  .mres{color:#444}
+</style>
+</head>
+<body>
+<h1>Othello AI League Arena</h1>
+<div><span id="testSummary"></span></div>
+<div id="selftests"></div>
+<div id="seedRow">
+  シード: <input id="seedInput" size="12">
+  <button id="seedBtn">適用(結果リセット)</button>
+  <span id="seedShow"></span>
+</div>
+<div class="layout">
+  <div>
+    <div id="board"></div>
+    <div>
+      速度:
+      <button class="speed on" data-s="1">1x</button>
+      <button class="speed" data-s="3">3x</button>
+      <button class="speed" data-s="10">10x</button>
+      <button id="skipBtn">スキップ(現在の対局)</button>
+    </div>
+    <div id="status">対局を選択してください</div>
+  </div>
+  <div>
+    <button id="runAll">全対局一括実行(12局)</button>
+    <ol id="matches"></ol>
+    <h3>順位表(勝2/分1/負0)</h3>
+    <table>
+      <thead><tr><th>#</th><th>AI</th><th>勝点</th><th>勝</th><th>分</th><th>敗</th><th>総獲得石数</th><th>反則</th><th>消化</th></tr></thead>
+      <tbody id="standingsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ===== CORE START =====
+// ---------- ルールエンジン ----------
+const EMPTY = 0, BLACK = 1, WHITE = 2;
+const DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+
+function opponent(c){ return c === BLACK ? WHITE : BLACK; }
+
+function initialBoard(){
+  const b = Array.from({length:8}, () => Array(8).fill(EMPTY));
+  b[3][3] = WHITE; b[3][4] = BLACK;
+  b[4][3] = BLACK; b[4][4] = WHITE;
+  return b;
+}
+
+function inBounds(r,c){ return r >= 0 && r < 8 && c >= 0 && c < 8; }
+
+// (row,col)にcolorが打った場合に反転する石のリスト。打てない場合は空。
+function flipsFor(board, color, row, col){
+  if(board[row][col] !== EMPTY) return [];
+  const opp = opponent(color), flips = [];
+  for(const [dr,dc] of DIRS){
+    const line = [];
+    let r = row + dr, c = col + dc;
+    while(inBounds(r,c) && board[r][c] === opp){ line.push([r,c]); r += dr; c += dc; }
+    if(line.length > 0 && inBounds(r,c) && board[r][c] === color) flips.push(...line);
+  }
+  return flips;
+}
+
+function legalMovesFor(board, color){
+  const moves = [];
+  for(let r = 0; r < 8; r++)
+    for(let c = 0; c < 8; c++)
+      if(board[r][c] === EMPTY && flipsFor(board, color, r, c).length > 0) moves.push({row:r, col:c});
+  return moves;
+}
+
+// boardを破壊的に更新し、反転した石のリストを返す
+function applyMove(board, color, row, col){
+  const flips = flipsFor(board, color, row, col);
+  board[row][col] = color;
+  for(const [r,c] of flips) board[r][c] = color;
+  return flips;
+}
+
+function countStones(board){
+  let black = 0, white = 0;
+  for(let r = 0; r < 8; r++)
+    for(let c = 0; c < 8; c++){
+      if(board[r][c] === BLACK) black++;
+      else if(board[r][c] === WHITE) white++;
+    }
+  return {black, white};
+}
+
+// ---------- シード付きPRNG (mulberry32) ----------
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- AI貼り込みスロット ----------
+// 各スロットを各モデルの decideMove(board, myColor, legalMoves) で丸ごと置き換える。
+// プレースホルダは再現性のためシード付き乱数 ARENA_RNG を使うランダム合法手AI。
+let activeRng = mulberry32(1); // 対局ごとにエンジンが差し替える
+function ARENA_RNG(){ return activeRng(); }
+
+const PLAYERS = {
+  fable: function decideMove(board, myColor, legalMoves){
+    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+  },
+  opus: function decideMove(board, myColor, legalMoves){
+    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+  },
+  sonnet: function decideMove(board, myColor, legalMoves){
+    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+  },
+  haiku: function decideMove(board, myColor, legalMoves){
+    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+  },
+};
+
+// ---------- システム境界: decideMove の戻り値検証 ----------
+// 反則(不正な戻り値/例外/100ms超過)はランダム合法手に置換して続行
+function getValidatedMove(fn, board, color, legalMoves, rng){
+  const boardCopy = board.map(row => row.slice());
+  const movesCopy = legalMoves.map(m => ({row:m.row, col:m.col}));
+  let chosen = null, foul = false, reason = '';
+  const t0 = Date.now();
+  try{
+    const result = fn(boardCopy, color, movesCopy);
+    const elapsed = Date.now() - t0;
+    if(elapsed > 100){
+      foul = true; reason = '時間超過' + elapsed + 'ms';
+    }else{
+      const r = result && result.row, c = result && result.col;
+      if(Number.isInteger(r) && Number.isInteger(c) && legalMoves.some(m => m.row === r && m.col === c)){
+        chosen = {row:r, col:c};
+      }else{
+        foul = true; reason = '不正な戻り値';
+      }
+    }
+  }catch(e){
+    foul = true; reason = '例外:' + (e && e.message ? e.message : String(e));
+  }
+  if(foul) chosen = legalMoves[Math.floor(rng() * legalMoves.length)];
+  return {row:chosen.row, col:chosen.col, foul, reason};
+}
+
+// ---------- 対局実行 ----------
+// 戻り値: {history, board, black, white, fouls, winner}
+// history要素: {color, pass:true} または {color, row, col, flips, foul, reason}
+function simulateGame(blackFn, whiteFn, rng, startBoard, startColor){
+  const board = startBoard ? startBoard.map(r => r.slice()) : initialBoard();
+  let current = startColor || BLACK;
+  activeRng = rng;
+  const history = [];
+  const fouls = {[BLACK]:0, [WHITE]:0};
+  while(true){
+    const moves = legalMovesFor(board, current);
+    if(moves.length === 0){
+      if(legalMovesFor(board, opponent(current)).length === 0) break; // 両者パス→終局
+      history.push({color:current, pass:true});
+      current = opponent(current);
+      continue;
+    }
+    const fn = current === BLACK ? blackFn : whiteFn;
+    const mv = getValidatedMove(fn, board, current, moves, rng);
+    if(mv.foul) fouls[current]++;
+    const flips = applyMove(board, current, mv.row, mv.col);
+    history.push({color:current, row:mv.row, col:mv.col, flips, foul:mv.foul, reason:mv.reason});
+    current = opponent(current);
+  }
+  const {black, white} = countStones(board);
+  const winner = black > white ? BLACK : white > black ? WHITE : 0;
+  return {history, board, black, white, fouls, winner};
+}
+
+// ---------- リーグ戦: 総当たり 4プレイヤー×先手後手入替 = 12局 ----------
+const PLAYER_KEYS = ['fable', 'opus', 'sonnet', 'haiku'];
+const MATCHES = [];
+for(const b of PLAYER_KEYS) for(const w of PLAYER_KEYS) if(b !== w) MATCHES.push({black:b, white:w});
+
+// 対局ごとにシードから決定的にrngを導出(実行順序に依存せず再現可能)
+function matchRng(seed, idx){ return mulberry32((seed + (idx + 1) * 1000003) >>> 0); }
+function simulateMatch(seed, idx){
+  const m = MATCHES[idx];
+  return simulateGame(PLAYERS[m.black], PLAYERS[m.white], matchRng(seed, idx));
+}
+
+// ---------- セルフテスト ----------
+// セルフテスト専用のランダムAI(PLAYERSに実AIを貼り込んでもテストが影響を受けないよう独立)
+function testRandomAI(board, myColor, legalMoves){
+  return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+}
+
+function runSelfTests(){
+  const results = [];
+  const t = (name, fn) => {
+    try{ fn(); results.push({name, pass:true, detail:''}); }
+    catch(e){ results.push({name, pass:false, detail:(e && e.message) ? e.message : String(e)}); }
+  };
+  const assert = (cond, msg) => { if(!cond) throw new Error(msg); };
+
+  t('1. 初期局面: 黒の合法手がちょうど4つ (d3, c4, f5, e6)', () => {
+    const ms = legalMovesFor(initialBoard(), BLACK);
+    assert(ms.length === 4, '合法手数=' + ms.length);
+    const set = new Set(ms.map(m => m.row + ',' + m.col));
+    // d3=(2,3) c4=(3,2) f5=(4,5) e6=(5,4)  (列a-h=0-7, 行1-8=0-7)
+    for(const k of ['2,3','3,2','4,5','5,4']) assert(set.has(k), '(' + k + ')が合法手にない');
+  });
+
+  t('2. 初期局面からd3に着手: 黒4石・白1石', () => {
+    const b = initialBoard();
+    const flips = applyMove(b, BLACK, 2, 3);
+    assert(flips.length === 1 && flips[0][0] === 3 && flips[0][1] === 3, 'd4のみ反転すべき');
+    const s = countStones(b);
+    assert(s.black === 4 && s.white === 1, '黒' + s.black + '石・白' + s.white + '石');
+    assert(b[2][3] === BLACK && b[3][3] === BLACK && b[4][3] === BLACK && b[3][4] === BLACK && b[4][4] === WHITE, '石の配置が不一致');
+  });
+
+  t('3. 8方向反転: 中心への着手で全8方向が反転する固定局面', () => {
+    // (3,3)の8近傍に白、その外側に黒を配置 → 黒(3,3)で8方向すべて1石ずつ反転
+    const b = Array.from({length:8}, () => Array(8).fill(EMPTY));
+    for(const [dr,dc] of DIRS){ b[3+dr][3+dc] = WHITE; b[3+2*dr][3+2*dc] = BLACK; }
+    assert(legalMovesFor(b, BLACK).some(m => m.row === 3 && m.col === 3), '(3,3)が黒の合法手でない');
+    const flips = applyMove(b, BLACK, 3, 3);
+    assert(flips.length === 8, '反転数=' + flips.length + ' (8であるべき)');
+    for(const [dr,dc] of DIRS) assert(b[3+dr][3+dc] === BLACK, '方向(' + dr + ',' + dc + ')が未反転');
+    const s = countStones(b);
+    assert(s.black === 17 && s.white === 0, '黒' + s.black + '・白' + s.white + ' (黒17・白0であるべき)');
+  });
+
+  t('4. パス遷移: 合法手なし→パス / 両者パス→終局', () => {
+    // 黒に合法手なし・白にはあり: 黒パス→白が(0,2)に着手→両者打てず終局
+    const b1 = Array.from({length:8}, () => Array(8).fill(EMPTY));
+    b1[0][0] = WHITE; b1[0][1] = BLACK;
+    assert(legalMovesFor(b1, BLACK).length === 0, '前提エラー: 黒に合法手がある');
+    assert(legalMovesFor(b1, WHITE).length === 1, '前提エラー: 白の合法手が1つでない');
+    const r1 = simulateGame(testRandomAI, testRandomAI, mulberry32(42), b1, BLACK);
+    assert(r1.history.length === 2, '履歴長=' + r1.history.length + ' (パス+着手の2であるべき)');
+    assert(r1.history[0].pass === true && r1.history[0].color === BLACK, '黒のパスが記録されていない');
+    assert(r1.history[1].color === WHITE && r1.history[1].row === 0 && r1.history[1].col === 2, '白の着手が(0,2)でない');
+    assert(r1.black === 0 && r1.white === 3, '終局石数 黒' + r1.black + '・白' + r1.white + ' (黒0・白3であるべき)');
+    // 両者とも合法手なし → 即終局(石は打たれない)
+    const b2 = Array.from({length:8}, () => Array(8).fill(EMPTY));
+    b2[0][0] = BLACK; b2[7][7] = WHITE;
+    const r2 = simulateGame(testRandomAI, testRandomAI, mulberry32(43), b2, BLACK);
+    assert(r2.history.length === 0, '両者パスで即終局しない');
+    assert(r2.black === 1 && r2.white === 1 && r2.winner === 0, '引き分け判定が不一致');
+  });
+
+  t('5. ランダムAI同士100局: 例外ゼロ・全局終局・石数整合', () => {
+    for(let i = 0; i < 100; i++){
+      const res = simulateGame(testRandomAI, testRandomAI, mulberry32(90000 + i));
+      // 独立に再現(リプレイ)して全手の合法性と石数保存を検証
+      const b = initialBoard();
+      let placed = 0;
+      for(const h of res.history){
+        if(h.pass) continue;
+        assert(b[h.row][h.col] === EMPTY, '局' + i + ': 占有マスへの着手');
+        assert(flipsFor(b, h.color, h.row, h.col).length > 0, '局' + i + ': 非合法手が記録されている');
+        applyMove(b, h.color, h.row, h.col);
+        placed++;
+        const s = countStones(b);
+        assert(s.black + s.white === 4 + placed, '局' + i + ': 石数計' + (s.black + s.white) + '≠' + (4 + placed));
+      }
+      const s = countStones(b);
+      assert(s.black === res.black && s.white === res.white, '局' + i + ': 最終石数が不一致');
+      assert(s.black + s.white <= 64, '局' + i + ': 石数が64を超過');
+      assert(res.fouls[BLACK] === 0 && res.fouls[WHITE] === 0, '局' + i + ': 合法AIに誤反則');
+      assert(legalMovesFor(b, BLACK).length === 0 && legalMovesFor(b, WHITE).length === 0, '局' + i + ': 終局していない');
+    }
+  });
+
+  return results;
+}
+// ===== CORE END =====
+
+// ---------- ここからUI ----------
+const TEST_RESULTS = runSelfTests();
+(function renderTests(){
+  const wrap = document.getElementById('selftests');
+  let passCount = 0;
+  for(const r of TEST_RESULTS){
+    const d = document.createElement('div');
+    d.className = 'test ' + (r.pass ? 'pass' : 'fail');
+    d.textContent = (r.pass ? '✔ PASS  ' : '✘ FAIL  ') + r.name + (r.detail ? ' — ' + r.detail : '');
+    wrap.appendChild(d);
+    if(r.pass) passCount++;
+  }
+  const sum = document.getElementById('testSummary');
+  sum.className = passCount === TEST_RESULTS.length ? 'pass' : 'fail';
+  sum.textContent = 'セルフテスト: ' + passCount + '/' + TEST_RESULTS.length + ' PASS';
+})();
+
+let currentSeed = 20260706;
+let results = new Array(MATCHES.length).fill(null);
+let busy = false, skipCurrent = false, speed = 1;
+
+const boardEl = document.getElementById('board');
+const cells = [];
+for(let i = 0; i < 64; i++){
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  boardEl.appendChild(cell);
+  cells.push(cell);
+}
+
+function renderBoard(board, last, flips){
+  const flipSet = new Set((flips || []).map(([r,c]) => r * 8 + c));
+  for(let r = 0; r < 8; r++)
+    for(let c = 0; c < 8; c++){
+      const cell = cells[r * 8 + c];
+      cell.className = 'cell'
+        + (last && last.row === r && last.col === c ? ' last' : '')
+        + (flipSet.has(r * 8 + c) ? ' flip' : '');
+      cell.textContent = '';
+      const v = board[r][c];
+      if(v !== EMPTY){
+        const d = document.createElement('div');
+        d.className = 'disc ' + (v === BLACK ? 'b' : 'w');
+        cell.appendChild(d);
+      }
+    }
+}
+
+function setStatus(msg){ document.getElementById('status').textContent = msg; }
+function coord(r,c){ return 'abcdefgh'[c] + (r + 1); }
+function delay(ms){ return new Promise(res => setTimeout(res, ms)); }
+
+const matchesEl = document.getElementById('matches');
+const resultSpans = [];
+MATCHES.forEach((m, i) => {
+  const li = document.createElement('li');
+  const btn = document.createElement('button');
+  btn.textContent = '対局';
+  btn.addEventListener('click', () => playOne(i));
+  const span = document.createElement('span');
+  span.className = 'mres';
+  li.append(m.black + '(黒) vs ' + m.white + '(白) ', btn, ' ', span);
+  matchesEl.appendChild(li);
+  resultSpans.push(span);
+});
+
+async function animateMatch(i){
+  skipCurrent = false;
+  const m = MATCHES[i];
+  const res = simulateMatch(currentSeed, i);
+  results[i] = res;
+  const b = initialBoard();
+  renderBoard(b, null, []);
+  const nameOf = c => c === BLACK ? m.black + '(黒)' : m.white + '(白)';
+  for(const h of res.history){
+    if(skipCurrent) break;
+    if(h.pass){
+      setStatus('対局' + (i + 1) + ': ' + nameOf(h.color) + ' パス');
+      await delay(500 / speed);
+      continue;
+    }
+    applyMove(b, h.color, h.row, h.col);
+    const s = countStones(b);
+    setStatus('対局' + (i + 1) + ': ' + nameOf(h.color) + ' → ' + coord(h.row, h.col)
+      + (h.foul ? ' 【反則(' + h.reason + ')→ランダム手】' : '')
+      + '  黒' + s.black + ' 白' + s.white);
+    renderBoard(b, {row:h.row, col:h.col}, h.flips);
+    await delay(450 / speed);
+  }
+  renderBoard(res.board, null, []);
+  const wtxt = res.winner === BLACK ? m.black + '(黒)の勝ち' : res.winner === WHITE ? m.white + '(白)の勝ち' : '引き分け';
+  setStatus('対局' + (i + 1) + ' 終局: 黒' + res.black + '–白' + res.white + ' ' + wtxt);
+  const foulTxt = (res.fouls[BLACK] || res.fouls[WHITE]) ? ' 反則 黒' + res.fouls[BLACK] + '/白' + res.fouls[WHITE] : '';
+  resultSpans[i].textContent = '黒' + res.black + '–白' + res.white + ' ' + wtxt + foulTxt;
+  updateStandings();
+}
+
+async function playOne(i){
+  if(busy) return;
+  busy = true;
+  try{ await animateMatch(i); } finally { busy = false; }
+}
+
+async function runAllMatches(){
+  if(busy) return;
+  busy = true;
+  try{
+    for(let i = 0; i < MATCHES.length; i++) await animateMatch(i);
+    setStatus('全' + MATCHES.length + '対局 終了');
+  } finally { busy = false; }
+}
+
+function updateStandings(){
+  const stats = {};
+  for(const k of PLAYER_KEYS) stats[k] = {pts:0, w:0, d:0, l:0, stones:0, fouls:0, played:0};
+  results.forEach((res, i) => {
+    if(!res) return;
+    const m = MATCHES[i];
+    const sb = stats[m.black], sw = stats[m.white];
+    sb.played++; sw.played++;
+    sb.stones += res.black; sw.stones += res.white;
+    sb.fouls += res.fouls[BLACK]; sw.fouls += res.fouls[WHITE];
+    if(res.winner === BLACK){ sb.pts += 2; sb.w++; sw.l++; }
+    else if(res.winner === WHITE){ sw.pts += 2; sw.w++; sb.l++; }
+    else { sb.pts++; sw.pts++; sb.d++; sw.d++; }
+  });
+  const order = [...PLAYER_KEYS].sort((a,b) =>
+    stats[b].pts - stats[a].pts || stats[b].stones - stats[a].stones || a.localeCompare(b));
+  const tbody = document.getElementById('standingsBody');
+  tbody.textContent = '';
+  order.forEach((k, rank) => {
+    const s = stats[k];
+    const tr = document.createElement('tr');
+    for(const v of [rank + 1, k, s.pts, s.w, s.d, s.l, s.stones, s.fouls, s.played + '/' + (MATCHES.length / 2)]){
+      const td = document.createElement('td');
+      td.textContent = String(v);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+document.querySelectorAll('button.speed').forEach(btn => {
+  btn.addEventListener('click', () => {
+    speed = Number(btn.dataset.s);
+    document.querySelectorAll('button.speed').forEach(b2 => b2.classList.toggle('on', b2 === btn));
+  });
+});
+document.getElementById('skipBtn').addEventListener('click', () => { skipCurrent = true; });
+document.getElementById('runAll').addEventListener('click', runAllMatches);
+document.getElementById('seedBtn').addEventListener('click', () => {
+  if(busy) return;
+  const v = parseInt(document.getElementById('seedInput').value, 10);
+  currentSeed = Number.isFinite(v) ? (v >>> 0) : 20260706;
+  document.getElementById('seedInput').value = String(currentSeed);
+  document.getElementById('seedShow').textContent = '現在のシード: ' + currentSeed + '(同シードなら全対局が再現されます)';
+  results = new Array(MATCHES.length).fill(null);
+  resultSpans.forEach(s => { s.textContent = ''; });
+  updateStandings();
+  renderBoard(initialBoard(), null, []);
+  setStatus('リセットしました');
+});
+
+document.getElementById('seedInput').value = String(currentSeed);
+document.getElementById('seedShow').textContent = '現在のシード: ' + currentSeed + '(同シードなら全対局が再現されます)';
+renderBoard(initialBoard(), null, []);
+updateStandings();
+</script>
+</body>
+</html>
