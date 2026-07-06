@@ -164,7 +164,114 @@ const PLAYERS = {
     return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
   },
   haiku: function decideMove(board, myColor, legalMoves){
-    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+    const opponent = myColor === 1 ? 2 : 1;
+    const MAX_DEPTH = 4;
+
+    const cornerWeight = 120;
+    const edgeWeight = 20;
+    const innerWeight = 1;
+    const mobilityWeight = 15;
+
+    function evaluateBoard(b, color) {
+      let score = 0;
+      const weights = [
+        [cornerWeight, -edgeWeight, edgeWeight, edgeWeight, edgeWeight, edgeWeight, -edgeWeight, cornerWeight],
+        [-edgeWeight, -30, -5, innerWeight, innerWeight, -5, -30, -edgeWeight],
+        [edgeWeight, -5, innerWeight, innerWeight, innerWeight, innerWeight, -5, edgeWeight],
+        [edgeWeight, innerWeight, innerWeight, innerWeight, innerWeight, innerWeight, innerWeight, edgeWeight],
+        [edgeWeight, innerWeight, innerWeight, innerWeight, innerWeight, innerWeight, innerWeight, edgeWeight],
+        [edgeWeight, -5, innerWeight, innerWeight, innerWeight, innerWeight, -5, edgeWeight],
+        [-edgeWeight, -30, -5, innerWeight, innerWeight, -5, -30, -edgeWeight],
+        [cornerWeight, -edgeWeight, edgeWeight, edgeWeight, edgeWeight, edgeWeight, -edgeWeight, cornerWeight]
+      ];
+
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (b[r][c] === color) score += weights[r][c];
+          else if (b[r][c] !== 0) score -= weights[r][c] * 0.7;
+        }
+      }
+      return score;
+    }
+
+    function countMobility(b, color) {
+      let count = 0;
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (b[r][c] === 0) {
+            if (isValidMove(b, r, c, color)) count++;
+          }
+        }
+      }
+      return count;
+    }
+
+    function isValidMove(b, row, col, color) {
+      if (b[row][col] !== 0) return false;
+      const opp = color === 1 ? 2 : 1;
+      const dirs = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+
+      for (const [dr, dc] of dirs) {
+        let r = row + dr, c = col + dc;
+        let found = false;
+        while (r >= 0 && r < 8 && c >= 0 && c < 8) {
+          if (b[r][c] === 0) break;
+          if (b[r][c] === color) {
+            if (found) return true;
+            break;
+          }
+          found = true;
+          r += dr;
+          c += dc;
+        }
+      }
+      return false;
+    }
+
+    function minimax(b, depth, isMax, color) {
+      if (depth === 0) {
+        const eval1 = evaluateBoard(b, color);
+        const mobility = countMobility(b, color) - countMobility(b, opponent) * 0.5;
+        return eval1 + mobility * mobilityWeight;
+      }
+
+      const moves = [];
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (b[r][c] === 0 && isValidMove(b, r, c, isMax ? color : opponent)) {
+            moves.push({row: r, col: c});
+          }
+        }
+      }
+
+      if (moves.length === 0) {
+        return evaluateBoard(b, color) + countMobility(b, color) * mobilityWeight;
+      }
+
+      let best = isMax ? -Infinity : Infinity;
+      for (const move of moves) {
+        const copy = b.map(row => [...row]);
+        copy[move.row][move.col] = isMax ? color : opponent;
+        const val = minimax(copy, depth - 1, !isMax, color);
+        best = isMax ? Math.max(best, val) : Math.min(best, val);
+      }
+      return best;
+    }
+
+    let bestMove = legalMoves[0];
+    let bestScore = -Infinity;
+
+    for (const move of legalMoves) {
+      const copy = board.map(row => [...row]);
+      copy[move.row][move.col] = myColor;
+      const score = minimax(copy, MAX_DEPTH - 1, false, myColor);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMove = move;
+      }
+    }
+
+    return bestMove;
   },
 };
 
