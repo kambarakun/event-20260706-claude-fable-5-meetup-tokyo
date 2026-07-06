@@ -160,8 +160,215 @@ const PLAYERS = {
   opus: function decideMove(board, myColor, legalMoves){
     return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
   },
-  sonnet: function decideMove(board, myColor, legalMoves){
-    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+  sonnet: function decideMove(board, myColor, legalMoves) {
+    const EMPTY = 0, BLACK = 1, WHITE = 2;
+    const DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+    const TIME_LIMIT_MS = 70;
+    const startTime = Date.now();
+    const deadline = startTime + TIME_LIMIT_MS;
+
+    if (legalMoves.length === 1) return legalMoves[0];
+
+    const WEIGHTS = [
+      120,-20, 20,  5,  5, 20,-20,120,
+      -20,-40, -5, -5, -5, -5,-40,-20,
+       20, -5, 15,  3,  3, 15, -5, 20,
+        5, -5,  3,  3,  3,  3, -5,  5,
+        5, -5,  3,  3,  3,  3, -5,  5,
+       20, -5, 15,  3,  3, 15, -5, 20,
+      -20,-40, -5, -5, -5, -5,-40,-20,
+      120,-20, 20,  5,  5, 20,-20,120
+    ];
+    const CORNERS = [0, 7, 56, 63];
+    const CORNER_OF = new Array(64).fill(-1);
+    CORNER_OF[9] = 0;  CORNER_OF[1] = 0;  CORNER_OF[8] = 0;
+    CORNER_OF[14] = 7; CORNER_OF[6] = 7;  CORNER_OF[15] = 7;
+    CORNER_OF[49] = 56; CORNER_OF[57] = 56; CORNER_OF[48] = 56;
+    CORNER_OF[54] = 63; CORNER_OF[62] = 63; CORNER_OF[55] = 63;
+
+    function opponent(c) { return c === BLACK ? WHITE : BLACK; }
+
+    function flipsFor(bd, color, row, col) {
+      if (bd[row][col] !== EMPTY) return null;
+      const opp = opponent(color);
+      let flips = null;
+      for (let d = 0; d < 8; d++) {
+        const dr = DIRS[d][0], dc = DIRS[d][1];
+        let r = row + dr, c = col + dc;
+        let count = 0;
+        while (r >= 0 && r < 8 && c >= 0 && c < 8 && bd[r][c] === opp) { count++; r += dr; c += dc; }
+        if (count > 0 && r >= 0 && r < 8 && c >= 0 && c < 8 && bd[r][c] === color) {
+          if (flips === null) flips = [];
+          let rr = row + dr, cc = col + dc;
+          for (let i = 0; i < count; i++) { flips.push(rr * 8 + cc); rr += dr; cc += dc; }
+        }
+      }
+      return flips;
+    }
+
+    function legalMovesFor(bd, color) {
+      const moves = [];
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (bd[r][c] === EMPTY && flipsFor(bd, color, r, c) !== null) moves.push(r * 8 + c);
+        }
+      }
+      return moves;
+    }
+
+    function hasAnyMove(bd, color) {
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (bd[r][c] === EMPTY && flipsFor(bd, color, r, c) !== null) return true;
+        }
+      }
+      return false;
+    }
+
+    function applyMove(bd, color, row, col) {
+      const flips = flipsFor(bd, color, row, col) || [];
+      const nb = new Array(8);
+      for (let r = 0; r < 8; r++) nb[r] = bd[r].slice();
+      nb[row][col] = color;
+      for (let i = 0; i < flips.length; i++) {
+        const idx = flips[i];
+        nb[(idx / 8) | 0][idx % 8] = color;
+      }
+      return nb;
+    }
+
+    function evaluate(bd, color) {
+      const opp = opponent(color);
+      let posScore = 0, myCount = 0, oppCount = 0, emptyCount = 0;
+
+      for (let i = 0; i < 64; i++) {
+        const r = (i / 8) | 0, c = i % 8;
+        const v = bd[r][c];
+        if (v === EMPTY) { emptyCount++; continue; }
+        let w = WEIGHTS[i];
+        const cornerIdx = CORNER_OF[i];
+        if (cornerIdx >= 0) {
+          const cr = (cornerIdx / 8) | 0, cc = cornerIdx % 8;
+          if (bd[cr][cc] !== EMPTY) w = 0;
+        }
+        if (v === color) { myCount++; posScore += w; }
+        else { oppCount++; posScore -= w; }
+      }
+
+      let cornerScore = 0;
+      for (let k = 0; k < 4; k++) {
+        const idx = CORNERS[k];
+        const r = (idx / 8) | 0, c = idx % 8;
+        if (bd[r][c] === color) cornerScore += 25;
+        else if (bd[r][c] === opp) cornerScore -= 25;
+      }
+
+      const myMoves = legalMovesFor(bd, color).length;
+      const oppMoves = legalMovesFor(bd, opp).length;
+      let mobilityScore = 0;
+      const totalMoves = myMoves + oppMoves;
+      if (totalMoves > 0) mobilityScore = 100 * (myMoves - oppMoves) / totalMoves;
+
+      let parityScore;
+      if (emptyCount === 0) {
+        parityScore = 500 * (myCount - oppCount) / Math.max(1, myCount + oppCount);
+      } else if (emptyCount < 12) {
+        parityScore = 8 * (myCount - oppCount);
+      } else {
+        parityScore = (myCount - oppCount);
+      }
+
+      let mobilityPenalty = 0;
+      if (oppMoves === 0 && myMoves > 0) mobilityPenalty = 50;
+      else if (myMoves === 0 && oppMoves > 0) mobilityPenalty = -50;
+
+      return posScore + cornerScore * 3 + mobilityScore * 2 + parityScore + mobilityPenalty;
+    }
+
+    let nodeCount = 0;
+    const TIMEOUT_SIGNAL = { timeout: true };
+
+    function negamax(bd, color, depth, alpha, beta) {
+      nodeCount++;
+      if ((nodeCount & 255) === 0 && Date.now() > deadline) throw TIMEOUT_SIGNAL;
+
+      const oppColor = opponent(color);
+      const moves = legalMovesFor(bd, color);
+
+      if (moves.length === 0) {
+        if (!hasAnyMove(bd, oppColor)) {
+          let my = 0, opp = 0;
+          for (let i = 0; i < 64; i++) {
+            const r = (i / 8) | 0, c = i % 8;
+            if (bd[r][c] === color) my++; else if (bd[r][c] === oppColor) opp++;
+          }
+          if (my > opp) return 100000 + (my - opp);
+          if (my < opp) return -100000 - (opp - my);
+          return 0;
+        }
+        if (depth === 0) return evaluate(bd, color);
+        return -negamax(bd, oppColor, depth - 1, -beta, -alpha);
+      }
+
+      if (depth === 0) return evaluate(bd, color);
+
+      moves.sort((a, b) => WEIGHTS[b] - WEIGHTS[a]);
+
+      let best = -Infinity;
+      for (let k = 0; k < moves.length; k++) {
+        const m = moves[k];
+        const r = (m / 8) | 0, c = m % 8;
+        const nb = applyMove(bd, color, r, c);
+        const score = -negamax(nb, oppColor, depth - 1, -beta, -alpha);
+        if (score > best) best = score;
+        if (best > alpha) alpha = best;
+        if (alpha >= beta) break;
+      }
+      return best;
+    }
+
+    let emptyCount = 0;
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if (board[r][c] === EMPTY) emptyCount++;
+    const maxDepth = Math.max(1, Math.min(emptyCount, 60));
+
+    let rootMoves = legalMoves.map(m => m.row * 8 + m.col);
+    let bestMove = legalMoves[0];
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      let alpha = -Infinity;
+      let currentBest = null;
+      let currentBestScore = -Infinity;
+      let completed = true;
+
+      for (let k = 0; k < rootMoves.length; k++) {
+        const m = rootMoves[k];
+        const r = (m / 8) | 0, c = m % 8;
+        const nb = applyMove(board, myColor, r, c);
+        let score;
+        try {
+          score = -negamax(nb, opponent(myColor), depth - 1, -Infinity, -alpha);
+        } catch (e) {
+          if (e === TIMEOUT_SIGNAL) { completed = false; break; }
+          throw e;
+        }
+        if (score > currentBestScore) {
+          currentBestScore = score;
+          currentBest = { row: r, col: c };
+        }
+        if (score > alpha) alpha = score;
+      }
+
+      if (completed && currentBest) {
+        bestMove = currentBest;
+        const bIdx = bestMove.row * 8 + bestMove.col;
+        const pos = rootMoves.indexOf(bIdx);
+        if (pos > 0) { rootMoves.splice(pos, 1); rootMoves.unshift(bIdx); }
+      }
+
+      if (!completed || Date.now() > deadline) break;
+    }
+
+    return bestMove;
   },
   haiku: function decideMove(board, myColor, legalMoves){
     return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
