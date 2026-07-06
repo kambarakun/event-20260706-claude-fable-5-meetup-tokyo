@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reversi AI League — 対戦結果レポート</title>
+<!--
+  tools/arena.mjs report が生成する自己完結型レポート。ダブルクリックで開ける。
+  エンジン(reversi-arena.html の CORE 部)と集計済みログは生成時に下部の script 2 ブロックへ注入される。
+  盤面リプレイは対局と同じルールエンジン(applyMove 等)で棋譜を再生する。
+-->
+<style>
+  :root{--fg:#1a1a1a;--muted:#666;--line:#ddd;--bg:#fafafa;--card:#fff;--accent:#2f6f4f}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;color:var(--fg);background:var(--bg);margin:0;padding:24px;line-height:1.6}
+  main{max-width:1100px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:16px;margin:28px 0 8px;border-left:4px solid var(--accent);padding-left:8px}
+  .sub{color:var(--muted);font-size:12px}
+  table{border-collapse:collapse;background:var(--card);font-size:13px}
+  th,td{border:1px solid var(--line);padding:4px 10px;text-align:right;white-space:nowrap}
+  th{background:#f0f0f0;font-weight:600}
+  td.name,th.name{text-align:left}
+  .chip{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+  .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0;font-size:13px}
+  select,button,label{font:inherit}
+  button{padding:2px 10px;cursor:pointer}
+  #gameTable tbody tr{cursor:pointer}
+  #gameTable tbody tr:hover{background:#eef5f0}
+  #gameTable tbody tr.sel{background:#dcebe2}
+  .foul{color:#b03030;font-weight:600}
+  .draw{color:var(--muted)}
+  #replayWrap{display:none;margin-top:12px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
+  #replayHead{font-size:14px;margin-bottom:8px}
+  #boardArea{display:flex;gap:20px;flex-wrap:wrap}
+  #board{display:grid;grid-template-columns:repeat(8,40px);grid-template-rows:repeat(8,40px);gap:1px;background:#1e5c3a;padding:1px;width:fit-content}
+  .cell{background:#2f8353;position:relative}
+  .cell.last{outline:3px solid #ffd54a;outline-offset:-3px;z-index:1}
+  .disc{position:absolute;inset:4px;border-radius:50%}
+  .disc.b{background:#111;box-shadow:inset 0 -3px 5px rgba(255,255,255,.18)}
+  .disc.w{background:#f4f4f4;box-shadow:inset 0 -3px 5px rgba(0,0,0,.22)}
+  .disc.flip{box-shadow:0 0 0 2px #ffd54a}
+  #coordsCols{display:grid;grid-template-columns:repeat(8,41px);width:fit-content;padding-left:1px;color:var(--muted);font-size:11px;text-align:center}
+  #boardRows{display:flex}
+  #coordsRows{display:grid;grid-template-rows:repeat(8,41px);align-items:center;color:var(--muted);font-size:11px;padding:1px 5px 0 0}
+  #replayInfo{font-size:13px;min-width:260px}
+  #replayInfo div{margin:3px 0}
+  .mono{font-family:ui-monospace,Menlo,monospace}
+  #pager{margin-left:auto}
+</style>
+</head>
+<body>
+<main>
+  <h1>Reversi AI League 対戦結果レポート</h1>
+  <div class="sub" id="summary"></div>
+
+  <h2>順位表(勝点: 勝3・分1・敗0)</h2>
+  <table id="standings"></table>
+
+  <h2>直接対決(行プレイヤーから見た 勝-分-敗)</h2>
+  <table id="h2h"></table>
+
+  <h2>対局ブラウザ(行をクリックで盤面リプレイ)</h2>
+  <div class="controls">
+    黒 <select id="fBlack"></select>
+    白 <select id="fWhite"></select>
+    勝者 <select id="fWinner"></select>
+    <label><input type="checkbox" id="fFoul"> 反則ありのみ</label>
+    <span id="pager">
+      <button id="pgPrev">前へ</button>
+      <span id="pgInfo"></span>
+      <button id="pgNext">次へ</button>
+    </span>
+  </div>
+  <table id="gameTable">
+    <thead><tr><th>#</th><th class="name">黒</th><th class="name">白</th><th>結果</th><th class="name">勝者</th><th>手数</th><th>反則</th><th>seed</th><th>局</th><th>ms</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <div id="replayWrap">
+    <div id="replayHead"></div>
+    <div id="boardArea">
+      <div>
+        <div id="coordsCols"></div>
+        <div id="boardRows">
+          <div id="coordsRows"></div>
+          <div id="board"></div>
+        </div>
+      </div>
+      <div id="replayInfo">
+        <div class="controls">
+          <button id="rFirst">⏮</button>
+          <button id="rPrev">◀</button>
+          <button id="rNext">▶</button>
+          <button id="rLast">⏭</button>
+          <button id="rPlay">自動再生</button>
+        </div>
+        <div id="rStep"></div>
+        <div id="rMove"></div>
+        <div id="rCount"></div>
+        <div class="sub">キー操作: ← / → で1手移動</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/*__CORE__*/
+</script>
+<script>
+const DATA = "__DATA__";
+</script>
+<script>
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const COLORS = { fable: '#9b6de8', opus: '#c47f1a', sonnet: '#3d84e0', haiku: '#25a86b' };
+  const chip = (k) => `<span class="chip" style="background:${COLORS[k] || '#999'}"></span>`;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const name = (k) => chip(k) + esc(k);
+
+  // ---------- サマリ ----------
+  const games = DATA.games;
+  const tsList = games.map((g) => g.ts).sort();
+  $('#summary').textContent =
+    `${games.length}局 / 対象: ${DATA.sources.join(', ')} / 期間: ${tsList[0] ?? '-'} 〜 ${tsList[tsList.length - 1] ?? '-'} / 生成: ${DATA.generatedAt}`;
+
+  // ---------- 順位表 ----------
+  {
+    const rows = DATA.order.map((k, i) => {
+      const s = DATA.standings[k];
+      return `<tr><td>${i + 1}</td><td class="name">${name(k)}</td><td>${s.pts}</td><td>${s.w}</td><td>${s.d}</td><td>${s.l}</td><td>${s.stones}</td><td>${s.fouls}</td><td>${s.games}</td></tr>`;
+    });
+    $('#standings').innerHTML =
+      '<thead><tr><th>#</th><th class="name">player</th><th>勝点</th><th>勝</th><th>分</th><th>敗</th><th>石</th><th>反則</th><th>局数</th></tr></thead><tbody>'
+      + rows.join('') + '</tbody>';
+  }
+
+  // ---------- 直接対決 ----------
+  {
+    const head = '<tr><th class="name"></th>' + DATA.order.map((k) => `<th class="name">${name(k)}</th>`).join('') + '</tr>';
+    const rows = DATA.order.map((a) => {
+      const cells = DATA.order.map((b) => {
+        if (a === b) return '<td class="draw">-</td>';
+        const v = (DATA.h2h[a] && DATA.h2h[a][b]) || { w: 0, d: 0, l: 0 };
+        return `<td>${v.w}-${v.d}-${v.l}</td>`;
+      });
+      return `<tr><td class="name">${name(a)}</td>${cells.join('')}</tr>`;
+    });
+    $('#h2h').innerHTML = '<thead>' + head + '</thead><tbody>' + rows.join('') + '</tbody>';
+  }
+
+  // ---------- 対局ブラウザ ----------
+  const PAGE = 50;
+  let page = 0;
+  let filtered = games;
+  let selected = -1; // filtered 内 index
+
+  for (const [id, withDraw] of [['fBlack', false], ['fWhite', false], ['fWinner', true]]) {
+    const sel = $('#' + id);
+    sel.innerHTML = '<option value="">(すべて)</option>'
+      + DATA.order.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('')
+      + (withDraw ? '<option value="__draw__">引き分け</option>' : '');
+    sel.addEventListener('change', applyFilter);
+  }
+  $('#fFoul').addEventListener('change', applyFilter);
+
+  function applyFilter() {
+    const b = $('#fBlack').value, w = $('#fWhite').value, win = $('#fWinner').value, foul = $('#fFoul').checked;
+    filtered = games.filter((g) =>
+      (!b || g.black === b) && (!w || g.white === w)
+      && (!win || (win === '__draw__' ? g.winner === null : g.winner === win))
+      && (!foul || g.fouls.black + g.fouls.white > 0));
+    page = 0; selected = -1;
+    renderList();
+  }
+
+  function renderList() {
+    const maxPage = Math.max(0, Math.ceil(filtered.length / PAGE) - 1);
+    page = Math.max(0, Math.min(page, maxPage));
+    const from = page * PAGE;
+    const slice = filtered.slice(from, from + PAGE);
+    $('#gameTable tbody').innerHTML = slice.map((g, j) => {
+      const i = from + j;
+      const foulN = g.fouls.black + g.fouls.white;
+      const winCell = g.winner === null ? '<span class="draw">引き分け</span>' : name(g.winner);
+      return `<tr data-i="${i}" class="${i === selected ? 'sel' : ''}"><td>${i + 1}</td>`
+        + `<td class="name">${name(g.black)}</td><td class="name">${name(g.white)}</td>`
+        + `<td>${g.blackCount}–${g.whiteCount}</td><td class="name">${winCell}</td>`
+        + `<td>${g.plies}</td><td class="${foulN ? 'foul' : ''}">${foulN || ''}</td>`
+        + `<td class="mono">${g.seed}</td><td>${g.idx}</td><td>${g.ms}</td></tr>`;
+    }).join('');
+    $('#pgInfo').textContent = filtered.length
+      ? `${from + 1}–${Math.min(from + PAGE, filtered.length)} / ${filtered.length}局`
+      : '該当なし';
+    for (const tr of document.querySelectorAll('#gameTable tbody tr')) {
+      tr.addEventListener('click', () => { selected = Number(tr.dataset.i); renderList(); openReplay(filtered[selected]); });
+    }
+  }
+  $('#pgPrev').addEventListener('click', () => { page--; renderList(); });
+  $('#pgNext').addEventListener('click', () => { page++; renderList(); });
+
+  // ---------- 盤面リプレイ(エンジンと同じルール実装で棋譜を再生) ----------
+  const boardEl = $('#board');
+  const cells = [];
+  for (let i = 0; i < 64; i++) {
+    const c = document.createElement('div');
+    c.className = 'cell';
+    boardEl.appendChild(c);
+    cells.push(c);
+  }
+  $('#coordsCols').innerHTML = 'abcdefgh'.split('').map((c) => `<span>${c}</span>`).join('');
+  $('#coordsRows').innerHTML = Array.from({ length: 8 }, (_, r) => `<span>${r + 1}</span>`).join('');
+
+  let cur = null, step = 0, timer = null;
+  const tokensOf = (g) => g.moves.match(/.{2}/g) || [];
+
+  function openReplay(g) {
+    stopAuto();
+    cur = g;
+    step = 0;
+    $('#replayWrap').style.display = 'block';
+    const foulTxt = g.fouls.black + g.fouls.white ? ` / 反則 黒${g.fouls.black}・白${g.fouls.white}` : '';
+    $('#replayHead').innerHTML =
+      `${name(g.black)}(黒) vs ${name(g.white)}(白) — ${g.blackCount}–${g.whiteCount} `
+      + (g.winner === null ? '引き分け' : `${esc(g.winner)}の勝ち`)
+      + `${foulTxt} <span class="sub mono">seed=${g.seed} idx=${g.idx} round=${g.round}</span>`;
+    renderReplay();
+    $('#replayWrap').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function renderReplay() {
+    const toks = tokensOf(cur);
+    step = Math.max(0, Math.min(step, toks.length));
+    const board = initialBoard();
+    let color = BLACK, last = null, flips = [];
+    for (let i = 0; i < step; i++) {
+      const tk = toks[i];
+      if (tk !== '--') {
+        const row = Number(tk[1]) - 1, col = 'abcdefgh'.indexOf(tk[0]);
+        flips = applyMove(board, color, row, col);
+        last = { row, col };
+      }
+      color = opponent(color);
+    }
+    const flipSet = new Set(step ? flips.map(([r, c]) => r * 8 + c) : []);
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const cell = cells[r * 8 + c];
+      cell.className = 'cell' + (last && last.row === r && last.col === c ? ' last' : '');
+      cell.innerHTML = '';
+      const v = board[r][c];
+      if (v !== EMPTY) {
+        const d = document.createElement('div');
+        d.className = 'disc ' + (v === BLACK ? 'b' : 'w') + (flipSet.has(r * 8 + c) ? ' flip' : '');
+        cell.appendChild(d);
+      }
+    }
+    const s = countStones(board);
+    $('#rStep').textContent = `手: ${step} / ${toks.length}`;
+    let moveTxt = '(開始局面)';
+    if (step > 0) {
+      const tk = toks[step - 1];
+      const who = step % 2 === 1 ? `${cur.black}(黒)` : `${cur.white}(白)`;
+      moveTxt = tk === '--' ? `${who} パス` : `${who} → ${tk}`;
+      const f = cur.foulPlies.find((p) => p.ply === step - 1);
+      if (f) moveTxt += ` 【反則: ${f.reason} → ランダム手】`;
+    }
+    $('#rMove').innerHTML = (cur.foulPlies.some((p) => p.ply === step - 1) ? '<span class="foul">' + esc(moveTxt) + '</span>' : esc(moveTxt));
+    $('#rCount').textContent = `石数: 黒${s.black} – 白${s.white}`;
+  }
+
+  function stopAuto() {
+    if (timer) { clearInterval(timer); timer = null; $('#rPlay').textContent = '自動再生'; }
+  }
+  $('#rFirst').addEventListener('click', () => { stopAuto(); step = 0; renderReplay(); });
+  $('#rPrev').addEventListener('click', () => { stopAuto(); step--; renderReplay(); });
+  $('#rNext').addEventListener('click', () => { stopAuto(); step++; renderReplay(); });
+  $('#rLast').addEventListener('click', () => { stopAuto(); step = tokensOf(cur).length; renderReplay(); });
+  $('#rPlay').addEventListener('click', () => {
+    if (timer) return stopAuto();
+    $('#rPlay').textContent = '停止';
+    timer = setInterval(() => {
+      if (!cur || step >= tokensOf(cur).length) return stopAuto();
+      step++; renderReplay();
+    }, 250);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!cur) return;
+    if (e.key === 'ArrowLeft') { stopAuto(); step--; renderReplay(); }
+    else if (e.key === 'ArrowRight') { stopAuto(); step++; renderReplay(); }
+  });
+
+  renderList();
+})();
+</script>
+</body>
+</html>

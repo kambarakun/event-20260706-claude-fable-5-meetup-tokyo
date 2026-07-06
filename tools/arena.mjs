@@ -4,6 +4,7 @@
 //   node tools/arena.mjs run --rounds 500 --workers 12   # 500ラウンド×12局を並列実行し logs/ にJSONL永続化
 //   node tools/arena.mjs standings [logsDir...]          # 保存済みログを集計して順位表・直接対決表を表示
 //   node tools/arena.mjs verify [logsDir...]             # ログの棋譜をルールエンジンで再生して整合性検証
+//   node tools/arena.mjs report [logsDir...] [--out p]   # 自己完結型HTMLレポート生成(既定 logs/report.html)
 //
 // エンジンは reversi-arena.html の CORE START/END マーカー間を抽出して vm 上で実行する
 // (単一ソース。HTML側を更新すればバッチも自動的に追従する)。
@@ -120,10 +121,14 @@ function aggregate(records) {
   return { stats, h2h };
 }
 
+function standingsOrder(stats) {
+  return Object.keys(stats).sort((a, b) =>
+    stats[b].pts - stats[a].pts || stats[b].stones - stats[a].stones || a.localeCompare(b));
+}
+
 function printStandings(records) {
   const { stats, h2h } = aggregate(records);
-  const keys = Object.keys(stats).sort((a, b) =>
-    stats[b].pts - stats[a].pts || stats[b].stones - stats[a].stones || a.localeCompare(b));
+  const keys = standingsOrder(stats);
 
   const rows = [['#', 'player', 'pts', 'W', 'D', 'L', 'stones', 'fouls', 'games']];
   keys.forEach((k, i) => {
@@ -238,7 +243,16 @@ async function cmdRun(argv) {
   const fd = fs.openSync(logPath, 'a');
   const records = [];
   const t0 = Date.now();
-  let next = 0, done = 0, fouls = 0, exited = 0;
+  let next = 0, done = 0, fouls = 0, exited = 0, stopping = false;
+
+  // 安全停止: 実行中の対局は書き切り、以降のジョブ投下だけを止める
+  const onSignal = (sig) => {
+    if (stopping) process.exit(1);
+    stopping = true;
+    console.log(`${sig}受信: 実行中の対局を書き切ってから終了します(もう一度送ると即時終了)`);
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
 
   const progress = () => {
     const dt = (Date.now() - t0) / 1000;
@@ -254,7 +268,7 @@ async function cmdRun(argv) {
       const worker = new Worker(fileURLToPath(import.meta.url));
       pool.push(worker);
       const dispatch = () => {
-        if (next < jobs.length) worker.postMessage(jobs[next++]);
+        if (!stopping && next < jobs.length) worker.postMessage(jobs[next++]);
         else worker.postMessage({ type: 'exit' });
       };
       worker.on('message', (msg) => {
@@ -278,14 +292,17 @@ async function cmdRun(argv) {
   progress();
 
   const { stats } = aggregate(records);
+  process.off('SIGINT', onSignal);
+  process.off('SIGTERM', onSignal);
   meta.finishedAt = new Date().toISOString();
   meta.durationMs = Date.now() - t0;
   meta.gamesDone = done;
   meta.foulsTotal = fouls;
+  meta.aborted = done < jobs.length;
   meta.standings = stats;
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
-  console.log(`\n完了: ${done}局 / ${(meta.durationMs / 1000 / 60).toFixed(1)}分\n`);
+  console.log(`\n${meta.aborted ? '中断' : '完了'}: ${done}局 / ${(meta.durationMs / 1000 / 60).toFixed(1)}分\n`);
   printStandings(records);
   console.log(`\nログ: ${path.relative(ROOT, logPath)}`);
 }
@@ -337,15 +354,50 @@ function cmdVerify(argv) {
   if (bad) process.exit(1);
 }
 
+// ---------- report ----------
+// テンプレートにエンジン(CORE)と集計済みデータを注入した自己完結型HTMLを生成。
+// 盤面リプレイも対局と同じルールエンジンで動く。
+
+function cmdReport(argv) {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { out: { type: 'string', default: 'logs/report.html' } },
+    allowPositionals: true,
+  });
+  const { src } = loadEngine();
+  const files = collectLogFiles(positionals.length ? positionals : ['logs']);
+  if (!files.length) { console.error('ログファイル(.jsonl)が見つかりません'); process.exit(1); }
+  const records = readRecords(files).filter((r) => r.v === SCHEMA_VERSION);
+  records.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  const { stats, h2h } = aggregate(records);
+  const data = {
+    generatedAt: new Date().toISOString(),
+    sources: files.map((f) => path.relative(ROOT, f)),
+    order: standingsOrder(stats),
+    standings: stats,
+    h2h,
+    games: records,
+  };
+  const tpl = fs.readFileSync(path.join(ROOT, 'tools', 'report-template.html'), 'utf8');
+  // </script> 早期終了を防ぐため < をエスケープ。replace は関数形式($~の特殊展開を避ける)
+  const json = JSON.stringify(data).replace(/</g, '\\u003c');
+  const html = tpl.replace('/*__CORE__*/', () => src).replace('"__DATA__"', () => json);
+  const outPath = path.resolve(ROOT, values.out);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, html);
+  console.log(`${records.length}局 → ${path.relative(ROOT, outPath)} (${(html.length / 1024 / 1024).toFixed(1)}MB)`);
+}
+
 // ---------- エントリポイント ----------
 
 if (isMainThread) {
   const [cmd, ...rest] = process.argv.slice(2);
-  const usage = 'usage: node tools/arena.mjs <run|standings|verify> [options]';
+  const usage = 'usage: node tools/arena.mjs <run|standings|verify|report> [options]';
   try {
     if (cmd === 'run') await cmdRun(rest);
     else if (cmd === 'standings') cmdStandings(rest);
     else if (cmd === 'verify') cmdVerify(rest);
+    else if (cmd === 'report') cmdReport(rest);
     else { console.error(usage); process.exit(cmd ? 1 : 0); }
   } catch (e) {
     console.error(`エラー: ${e.message}`);
