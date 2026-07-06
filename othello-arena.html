@@ -396,7 +396,250 @@ const PLAYERS = {
     return { row: best.row, col: best.col };
   },
   opus: function decideMove(board, myColor, legalMoves){
-    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+    const START = Date.now();
+    const TIME_LIMIT = 80; // ms 上限(100ms制約に対し余裕を確保)
+    const opp = myColor === 1 ? 2 : 1;
+
+    // 盤面を Int8Array(64) に平坦化
+    const cells = new Int8Array(64);
+    let empties = 0;
+    for (let r = 0; r < 8; r++) {
+      const row = board[r];
+      for (let c = 0; c < 8; c++) {
+        const v = row[c];
+        cells[r * 8 + c] = v;
+        if (v === 0) empties++;
+      }
+    }
+
+    // 8方向の各マスからの「レイ(端までのマス列)」を事前計算
+    const DIRS = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+    const RAYS = new Array(64);
+    const NEIGH = new Array(64);
+    for (let pos = 0; pos < 64; pos++) {
+      const r = pos >> 3, c = pos & 7;
+      const rays = [];
+      const nb = [];
+      for (let d = 0; d < 8; d++) {
+        const dr = DIRS[d][0], dc = DIRS[d][1];
+        const line = [];
+        let nr = r + dr, nc = c + dc;
+        while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+          const idx = nr * 8 + nc;
+          line.push(idx);
+          nr += dr; nc += dc;
+        }
+        if (line.length > 0) { rays.push(line); nb.push(line[0]); }
+      }
+      RAYS[pos] = rays;
+      NEIGH[pos] = nb;
+    }
+
+    // 静的評価用の重み行列(標準的なオセロ位置価値)
+    const V = [
+      20, -3, 11, 8, 8, 11, -3, 20,
+      -3, -7, -4, 1, 1, -4, -7, -3,
+      11, -4, 2, 2, 2, 2, -4, 11,
+      8, 1, 2, -3, -3, 2, 1, 8,
+      8, 1, 2, -3, -3, 2, 1, 8,
+      11, -4, 2, 2, 2, 2, -4, 11,
+      -3, -7, -4, 1, 1, -4, -7, -3,
+      20, -3, 11, 8, 8, 11, -3, 20
+    ];
+    const CORNERS = [0, 7, 56, 63];
+    const CORNER_ADJ = { 0: [1, 8, 9], 7: [6, 14, 15], 56: [48, 49, 57], 63: [54, 55, 62] };
+
+    // 合法手生成(内部用)。to=着手側, other=相手
+    function genMoves(cs, to, other) {
+      const res = [];
+      for (let pos = 0; pos < 64; pos++) {
+        if (cs[pos] !== 0) continue;
+        const rays = RAYS[pos];
+        for (let d = 0; d < rays.length; d++) {
+          const ray = rays[d];
+          let seenOther = false, ok = false;
+          for (let i = 0; i < ray.length; i++) {
+            const cv = cs[ray[i]];
+            if (cv === other) seenOther = true;
+            else if (cv === to) { if (seenOther) ok = true; break; }
+            else break;
+          }
+          if (ok) { res.push(pos); break; }
+        }
+      }
+      return res;
+    }
+
+    function countMoves(cs, to, other) {
+      let n = 0;
+      for (let pos = 0; pos < 64; pos++) {
+        if (cs[pos] !== 0) continue;
+        const rays = RAYS[pos];
+        for (let d = 0; d < rays.length; d++) {
+          const ray = rays[d];
+          let seenOther = false;
+          for (let i = 0; i < ray.length; i++) {
+            const cv = cs[ray[i]];
+            if (cv === other) seenOther = true;
+            else if (cv === to) { if (seenOther) { n++; d = 99; } break; }
+            else break;
+          }
+        }
+      }
+      return n;
+    }
+
+    // 着手を適用した新しい盤面を返す
+    function applyMove(cs, pos, to, other) {
+      const nc = cs.slice();
+      nc[pos] = to;
+      const rays = RAYS[pos];
+      for (let d = 0; d < rays.length; d++) {
+        const ray = rays[d];
+        let j = 0;
+        while (j < ray.length && cs[ray[j]] === other) j++;
+        if (j > 0 && j < ray.length && cs[ray[j]] === to) {
+          for (let k = 0; k < j; k++) nc[ray[k]] = to;
+        }
+      }
+      return nc;
+    }
+
+    // 終局(両者パス)時の確定石差。color視点。
+    function terminalExact(cs, color) {
+      let my = 0, op = 0;
+      for (let pos = 0; pos < 64; pos++) {
+        const v = cs[pos];
+        if (v === color) my++;
+        else if (v !== 0) op++;
+      }
+      return (my - op) * 1000000;
+    }
+
+    // 静的評価。color視点。myMob は手番側の合法手数(再利用)。
+    function evaluate(cs, color, other, myMob) {
+      let posMy = 0, my = 0, op = 0;
+      let myFront = 0, opFront = 0;
+      for (let pos = 0; pos < 64; pos++) {
+        const v = cs[pos];
+        if (v === 0) continue;
+        if (v === color) { my++; posMy += V[pos]; }
+        else { op++; posMy -= V[pos]; }
+        const nb = NEIGH[pos];
+        let front = false;
+        for (let k = 0; k < nb.length; k++) { if (cs[nb[k]] === 0) { front = true; break; } }
+        if (front) { if (v === color) myFront++; else opFront++; }
+      }
+
+      let myCorner = 0, opCorner = 0;
+      for (let i = 0; i < 4; i++) {
+        const v = cs[CORNERS[i]];
+        if (v === color) myCorner++;
+        else if (v !== 0) opCorner++;
+      }
+
+      let myClose = 0, opClose = 0;
+      for (let i = 0; i < 4; i++) {
+        const cp = CORNERS[i];
+        if (cs[cp] !== 0) continue;
+        const adj = CORNER_ADJ[cp];
+        for (let k = 0; k < adj.length; k++) {
+          const v = cs[adj[k]];
+          if (v === color) myClose++;
+          else if (v !== 0) opClose++;
+        }
+      }
+
+      const opMob = countMoves(cs, other, color);
+      if (myMob < 0) myMob = countMoves(cs, color, other);
+
+      let mob = 0;
+      if (myMob + opMob > 0) mob = (100 * (myMob - opMob)) / (myMob + opMob);
+      let front = 0;
+      if (myFront + opFront > 0) front = (100 * (opFront - myFront)) / (myFront + opFront);
+      let parity = 0;
+      if (my + op > 0) parity = (100 * (my - op)) / (my + op);
+
+      const t = (60 - empties) / 60;
+      const mobWeight = 15 + 55 * (1 - t);
+      const parWeight = 40 * t;
+
+      let score = posMy;
+      score += 300 * (myCorner - opCorner);
+      score -= 40 * (myClose - opClose);
+      score += mobWeight * mob;
+      score += 15 * front;
+      score += parWeight * parity;
+      return score;
+    }
+
+    // ネガマックス + αβ。時間超過は例外で巻き戻す。
+    const TIMEOUT = {};
+    let nodes = 0;
+    function search(cs, to, other, depth, alpha, beta) {
+      if ((++nodes & 1023) === 0 && Date.now() - START > TIME_LIMIT) throw TIMEOUT;
+
+      const moves = genMoves(cs, to, other);
+      if (moves.length === 0) {
+        const om = genMoves(cs, other, to);
+        if (om.length === 0) return terminalExact(cs, to); // 両者パス=終局
+        return -search(cs, other, to, depth - 1, -beta, -alpha); // パス
+      }
+      if (depth <= 0) return evaluate(cs, to, other, moves.length);
+
+      moves.sort((a, b) => V[b] - V[a]);
+
+      let best = -Infinity;
+      for (let i = 0; i < moves.length; i++) {
+        const nc = applyMove(cs, moves[i], to, other);
+        const val = -search(nc, other, to, depth - 1, -beta, -alpha);
+        if (val > best) best = val;
+        if (best > alpha) alpha = best;
+        if (alpha >= beta) break;
+      }
+      return best;
+    }
+
+    function rootSearch(depth, prevBest) {
+      const moves = genMoves(cells, myColor, opp);
+      moves.sort((a, b) => V[b] - V[a]);
+      if (prevBest >= 0) {
+        const idx = moves.indexOf(prevBest);
+        if (idx > 0) { moves.splice(idx, 1); moves.unshift(prevBest); }
+      }
+      let best = -Infinity, bestMove = moves[0];
+      let alpha = -Infinity;
+      const beta = Infinity;
+      for (let i = 0; i < moves.length; i++) {
+        const nc = applyMove(cells, moves[i], myColor, opp);
+        const val = -search(nc, opp, myColor, depth - 1, -beta, -alpha);
+        if (val > best) { best = val; bestMove = moves[i]; }
+        if (best > alpha) alpha = best;
+      }
+      return bestMove;
+    }
+
+    // 反復深化。時間内で到達できた最深の結果を採用。
+    let chosen = legalMoves[0].row * 8 + legalMoves[0].col;
+    let prevBest = -1;
+    const maxDepth = empties;
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      try {
+        const mv = rootSearch(depth, prevBest);
+        chosen = mv;
+        prevBest = mv;
+      } catch (e) {
+        if (e !== TIMEOUT) throw e;
+        break;
+      }
+      if (Date.now() - START > TIME_LIMIT) break;
+    }
+
+    const cr = chosen >> 3, cc = chosen & 7;
+    for (let i = 0; i < legalMoves.length; i++) {
+      if (legalMoves[i].row === cr && legalMoves[i].col === cc) return legalMoves[i];
+    }
+    return legalMoves[0];
   },
   sonnet: function decideMove(board, myColor, legalMoves) {
     const EMPTY = 0, BLACK = 1, WHITE = 2;
