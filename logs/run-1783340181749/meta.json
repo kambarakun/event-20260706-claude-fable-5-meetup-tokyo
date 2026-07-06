@@ -1,0 +1,61 @@
+{
+  "runId": "run-1783340181749",
+  "baseSeed": 1783340181749,
+  "rounds": 708,
+  "gamesTotal": 8496,
+  "workers": 20,
+  "players": [
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku"
+  ],
+  "schemaVersion": 1,
+  "node": "v24.16.0",
+  "gitSha": "d6d2325",
+  "engineSha256": "9ec64041b229d38f",
+  "startedAt": "2026-07-06T12:16:21.764Z",
+  "finishedAt": "2026-07-06T12:37:33.218Z",
+  "durationMs": 1271452,
+  "gamesDone": 8496,
+  "foulsTotal": 3826,
+  "aborted": false,
+  "standings": {
+    "fable": {
+      "pts": 10904,
+      "w": 3624,
+      "d": 32,
+      "l": 592,
+      "stones": 198872,
+      "fouls": 4,
+      "games": 4248
+    },
+    "haiku": {
+      "pts": 6,
+      "w": 2,
+      "d": 0,
+      "l": 4246,
+      "stones": 35914,
+      "fouls": 3804,
+      "games": 4248
+    },
+    "sonnet": {
+      "pts": 9137,
+      "w": 3041,
+      "d": 14,
+      "l": 1193,
+      "stones": 174191,
+      "fouls": 6,
+      "games": 4248
+    },
+    "opus": {
+      "pts": 5406,
+      "w": 1794,
+      "d": 24,
+      "l": 2430,
+      "stones": 131451,
+      "fouls": 12,
+      "games": 4248
+    }
+  }
+}
