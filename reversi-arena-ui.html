@@ -1,0 +1,1054 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:,">
+<title>Claude Reversi League — AI Meetup Tokyo</title>
+<style>
+/* ============================================================
+   CLAUDE REVERSI LEAGUE — tournament broadcast UI
+   sumi-black chrome / brass keylines / felt-green board
+   ============================================================ */
+*{ margin:0; padding:0; box-sizing:border-box; }
+:root{
+  --bg:#0c0e12; --surface:#13161c; --surface2:#191d25; --line:#272c36;
+  --text:#eae6dc; --muted:#9a968a; --faint:#5c594f;
+  --brass:#c8a45c; --brass-dim:#7d6a42;
+  --gold:#e3b84e; --silver:#c2c9d6; --bronze:#c98a4b;
+  --foul:#e0654f;
+  --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic UI","Noto Sans CJK JP",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,"Courier New",monospace;
+  --bs:max(min(calc(100dvh - 252px), 44vw), 320px);
+}
+html,body{ height:100%; }
+body{
+  font-family:var(--font-ui); color:var(--text); overflow:hidden;
+  background:radial-gradient(140% 120% at 50% 0%, #12151b 0%, #0c0e12 55%, #08090c 100%) fixed var(--bg);
+  font-variant-numeric:tabular-nums;
+}
+#app{ height:100dvh; display:grid; grid-template-rows:auto auto 1fr auto; padding:14px 26px 14px; gap:10px; }
+
+/* ---------- header ---------- */
+header{ display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:16px;
+  padding-bottom:10px; border-bottom:1px solid rgba(200,164,92,.28); }
+.eyebrow{ font-size:10px; letter-spacing:.32em; color:var(--brass); font-weight:600; }
+.brand h1{ font-size:clamp(15px,1.6vw,21px); letter-spacing:.24em; font-weight:800; margin-top:3px; white-space:nowrap; }
+.match-ind{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:2px; }
+.live-badge{ display:inline-flex; align-items:center; gap:7px; font-size:10.5px; letter-spacing:.28em; font-weight:700; color:#e88b8b; }
+.live-badge .dot{ width:7px; height:7px; border-radius:50%; background:#e0524f; animation:livepulse 1.6s ease-in-out infinite; }
+.live-badge.final{ color:var(--gold); } .live-badge.final .dot{ background:var(--gold); animation:none; }
+@keyframes livepulse{ 0%,100%{opacity:1; box-shadow:0 0 0 0 rgba(224,82,79,.5)} 50%{opacity:.55; box-shadow:0 0 0 5px rgba(224,82,79,0)} }
+.mnum{ font-size:19px; font-weight:800; letter-spacing:.14em; }
+.mnum span{ color:var(--faint); font-weight:600; font-size:14px; }
+.tabs{ justify-self:end; display:flex; gap:6px; }
+.tabs button{
+  font:inherit; font-size:11.5px; letter-spacing:.2em; font-weight:700; color:var(--muted);
+  background:transparent; border:1px solid var(--line); border-radius:9px; padding:8px 16px; cursor:pointer;
+  transition:all .25s ease; }
+.tabs button:hover{ border-color:var(--brass-dim); color:var(--text); }
+.tabs button.on{ color:#141009; background:linear-gradient(180deg,#d7b26a,#b4913f); border-color:transparent; }
+
+/* ---------- balance bar ---------- */
+.balance{ position:relative; height:11px; border-radius:6px; overflow:hidden;
+  background:linear-gradient(180deg,#f2ecdd,#d9d2c0); box-shadow:inset 0 1px 2px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.09); }
+.b-black{ position:absolute; inset:0 auto 0 0; width:50%; background:linear-gradient(180deg,#23262c,#0a0b0e);
+  border-right:2px solid var(--brass); transition:width .6s cubic-bezier(.35,.1,.25,1); }
+.b-center{ position:absolute; left:50%; top:-2px; bottom:-2px; width:1px; background:rgba(200,164,92,.55); }
+
+/* ---------- main views ---------- */
+main{ position:relative; display:grid; min-height:0; overflow:hidden; }
+main>section{ grid-area:1/1; min-height:0; transition:opacity .45s ease, transform .45s ease, visibility 0s linear 0s; }
+body[data-view="live"] #viewResults{ opacity:0; transform:translateX(30px); visibility:hidden; pointer-events:none; transition:opacity .45s ease, transform .45s ease, visibility 0s linear .45s; }
+body[data-view="results"] #viewLive{ opacity:0; transform:translateX(-30px); visibility:hidden; pointer-events:none; transition:opacity .45s ease, transform .45s ease, visibility 0s linear .45s; }
+
+/* ---------- live view ---------- */
+#viewLive{ display:grid; grid-template-columns:1fr auto 1fr; gap:clamp(14px,2.6vw,44px); align-items:center; justify-items:center; }
+.panel{ width:min(100%,300px); background:linear-gradient(180deg,var(--surface2),var(--surface));
+  border:1px solid var(--line); border-radius:15px; padding:18px 20px 16px; display:flex; flex-direction:column; gap:12px;
+  transition:box-shadow .35s ease, border-color .35s ease; }
+#panelB{ justify-self:end; } #panelW{ justify-self:start; }
+.panel.turn{ border-color:var(--acc); box-shadow:0 0 0 1px var(--acc), 0 6px 40px -6px var(--accGlow); }
+.p-top{ display:flex; align-items:center; gap:12px; }
+.mono{ display:grid; place-items:center; border-radius:10px; font-weight:800;
+  background:var(--accBg); border:1px solid var(--acc); color:var(--accHi); }
+.p-top .mono{ width:42px; height:42px; font-size:20px; }
+.p-name{ font-size:clamp(17px,1.7vw,22px); font-weight:800; letter-spacing:.18em; }
+.p-side{ display:flex; align-items:center; gap:6px; font-size:10.5px; letter-spacing:.22em; color:var(--muted); font-weight:600; margin-top:3px; }
+.sd{ width:11px; height:11px; border-radius:50%; display:inline-block; }
+.sd.black{ background:radial-gradient(circle at 34% 30%, #43464e, #0a0b0e 70%); box-shadow:0 0 0 1px rgba(255,255,255,.22); }
+.sd.white{ background:radial-gradient(circle at 34% 30%, #fff, #ddd5c2 70%); box-shadow:0 0 0 1px rgba(0,0,0,.4); }
+.p-count{ font-size:clamp(46px,6.2vh,74px); font-weight:800; line-height:1; letter-spacing:.02em; }
+.p-think{ height:18px; display:flex; align-items:center; gap:8px; font-size:10.5px; letter-spacing:.26em; font-weight:700; color:var(--accHi); visibility:hidden; }
+.panel.turn .p-think{ visibility:visible; }
+.t-dots{ display:inline-flex; gap:4px; }
+.t-dots i{ width:5px; height:5px; border-radius:50%; background:var(--accHi); animation:tdot 1s ease-in-out infinite; }
+.t-dots i:nth-child(2){ animation-delay:.18s } .t-dots i:nth-child(3){ animation-delay:.36s }
+@keyframes tdot{ 0%,100%{opacity:.25; transform:translateY(0)} 45%{opacity:1; transform:translateY(-3px)} }
+.p-stats{ font-size:12px; color:var(--muted); }
+.p-stats b{ color:var(--text); font-weight:700; }
+.p-foul{ align-self:flex-start; display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; letter-spacing:.08em;
+  color:#eb9a88; background:rgba(224,101,79,.13); border:1px solid rgba(224,101,79,.45); border-radius:20px; padding:4px 12px; }
+.p-foul.none{ visibility:hidden; }
+
+/* ---------- board ---------- */
+.board-frame{ width:var(--bs); padding:7px 22px 22px 7px; border-radius:13px; position:relative;
+  background:linear-gradient(168deg,#37291b 0%, #241a10 55%, #1b130b 100%);
+  box-shadow:0 30px 70px -18px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.07), 0 0 0 1px rgba(200,164,92,.3);
+  display:grid; grid-template:20px 1fr / 20px 1fr; }
+.coords-x{ grid-area:1/2; display:grid; grid-template-columns:repeat(8,1fr); }
+.coords-y{ grid-area:2/1; display:grid; grid-template-rows:repeat(8,1fr); }
+.coords-x span,.coords-y span{ display:grid; place-items:center; font-size:10px; font-weight:700; letter-spacing:.05em;
+  color:rgba(200,164,92,.75); font-family:var(--font-mono); }
+.board-felt{ grid-area:2/2; position:relative; aspect-ratio:1; display:grid;
+  grid-template:repeat(8,1fr)/repeat(8,1fr); border-radius:7px; overflow:hidden;
+  background:
+    radial-gradient(120% 90% at 50% 6%, rgba(255,255,255,.09), transparent 55%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.07 0.07 0.07 0 0'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>"),
+    linear-gradient(163deg,#1b5a41 0%, #14432f 55%, #0e3323 100%);
+  box-shadow:inset 0 2px 16px rgba(0,0,0,.6), inset 0 0 70px rgba(0,0,0,.28); }
+.cell{ position:relative; box-shadow:inset 0 0 0 1px rgba(5,26,15,.6); perspective:340px; }
+.star{ position:absolute; width:2.4%; aspect-ratio:1; border-radius:50%; background:rgba(6,28,16,.95); transform:translate(-50%,-50%); }
+.dw{ position:absolute; inset:8.5%; filter:drop-shadow(0 3px 4px rgba(0,0,0,.5)); }
+.dw.drop{ animation:dropIn .4s cubic-bezier(.2,.85,.3,1.25); }
+@keyframes dropIn{ 0%{ transform:translateY(-34%) scale(1.22); opacity:0 } 60%{ opacity:1 } 100%{ transform:none } }
+.dw.hop{ animation:hop var(--fd,480ms) ease; }
+@keyframes hop{ 50%{ transform:scale(1.13) } }
+.disc{ position:absolute; inset:0; transform-style:preserve-3d; transition:transform var(--fd,480ms) cubic-bezier(.5,.08,.35,1); }
+.disc .face{ position:absolute; inset:0; border-radius:50%; backface-visibility:hidden; -webkit-backface-visibility:hidden; }
+.face.b{ background:radial-gradient(circle at 32% 27%, #4b4e57, #17181c 58%, #050608 100%);
+  box-shadow:inset 0 -2px 5px rgba(0,0,0,.65), inset 0 2px 3px rgba(255,255,255,.16); }
+.face.w{ transform:rotateY(180deg); background:radial-gradient(circle at 32% 27%, #fffdf6, #e9e2cf 55%, #b3ab97 100%);
+  box-shadow:inset 0 -2px 5px rgba(103,92,66,.5), inset 0 2px 3px rgba(255,255,255,.85); }
+.disc.white{ transform:rotateY(180deg); }
+#ring{ position:absolute; inset:3%; border:2.5px solid var(--rc,#fff); border-radius:50%; pointer-events:none; display:none;
+  animation:ringpulse 1.5s cubic-bezier(.25,.55,.4,1) infinite; }
+@keyframes ringpulse{ 0%{ transform:scale(.82); opacity:.95 } 72%{ transform:scale(1.1); opacity:0 } 100%{ transform:scale(1.1); opacity:0 } }
+
+/* ---------- bottom bar ---------- */
+.bottombar{ display:flex; align-items:center; gap:16px; padding-top:2px; min-width:0; }
+.controls{ display:flex; align-items:center; gap:8px; }
+.controls button{ font:inherit; font-size:12.5px; font-weight:700; letter-spacing:.06em; color:var(--text);
+  background:var(--surface2); border:1px solid var(--line); border-radius:9px; padding:8px 13px; cursor:pointer;
+  transition:all .2s ease; white-space:nowrap; }
+.controls button:hover{ border-color:var(--brass-dim); }
+#btnPlay{ width:42px; }
+.seg{ display:flex; background:var(--surface); border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+.seg button{ border:0; border-radius:0; background:transparent; padding:8px 12px; color:var(--muted); }
+.seg button.on{ background:linear-gradient(180deg,#d7b26a,#b4913f); color:#141009; }
+#btnAuto.on{ border-color:var(--brass); color:var(--brass); box-shadow:inset 0 0 14px rgba(200,164,92,.12); }
+.movecount{ font-size:11px; letter-spacing:.22em; color:var(--muted); font-weight:700; white-space:nowrap; }
+.movecount b{ color:var(--text); font-size:15px; letter-spacing:.05em; }
+.ticker{ flex:1; min-width:0; overflow:hidden; white-space:nowrap; mask-image:linear-gradient(90deg,transparent,#000 7%,#000 100%);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 7%,#000 100%); }
+.ticker-in{ display:inline-flex; gap:14px; align-items:center; padding:4px 2px; }
+.mv{ font-family:var(--font-mono); font-size:13px; color:var(--faint); display:inline-flex; align-items:center; gap:5px; }
+.mv b{ color:var(--muted); font-weight:600; }
+.mv.now b{ color:var(--text); font-weight:800; }
+.mv .no{ font-size:10px; }
+.mv .fl{ color:var(--foul); font-size:11px; }
+.md{ width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
+.md.black{ background:#0c0d10; box-shadow:0 0 0 1px rgba(255,255,255,.5); }
+.md.white{ background:#ece5d2; box-shadow:0 0 0 1px rgba(0,0,0,.5); }
+
+/* ---------- toasts ---------- */
+#toasts{ position:fixed; top:92px; left:50%; transform:translateX(-50%); z-index:90; display:flex; flex-direction:column; gap:8px; align-items:center; pointer-events:none; }
+.toast{ background:rgba(12,14,18,.94); border:1px solid var(--line); border-left:3px solid var(--brass);
+  border-radius:10px; padding:10px 18px; font-size:13.5px; font-weight:600; letter-spacing:.04em;
+  box-shadow:0 14px 40px -10px rgba(0,0,0,.8); animation:toastIn .32s cubic-bezier(.2,.8,.3,1.2); white-space:nowrap; }
+.toast.foul{ border-left-color:var(--foul); color:#f0b3a5; }
+.toast.out{ opacity:0; transform:translateY(-8px); transition:all .3s ease; }
+@keyframes toastIn{ from{ opacity:0; transform:translateY(-12px) scale(.96) } }
+
+/* ---------- overlay (interstitial / match end) ---------- */
+#overlay{ position:fixed; inset:0; z-index:60; display:grid; place-items:center;
+  background:rgba(5,6,9,.74); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+  opacity:0; visibility:hidden; transition:opacity .38s ease, visibility 0s linear .38s; }
+#overlay.show{ opacity:1; visibility:visible; transition:opacity .38s ease; }
+.ov-card{ text-align:center; display:flex; flex-direction:column; gap:14px; align-items:center; transform:translateY(10px); transition:transform .38s ease; }
+#overlay.show .ov-card{ transform:none; }
+.ov-eyebrow{ font-size:11px; letter-spacing:.4em; color:var(--brass); font-weight:700; }
+.ov-main{ font-size:clamp(34px,5vw,58px); font-weight:800; letter-spacing:.1em; line-height:1.15; }
+.ov-main .vs{ color:var(--faint); font-size:.55em; letter-spacing:.3em; margin:0 .35em; font-weight:700; }
+.ov-score{ font-size:clamp(26px,3.2vw,40px); font-weight:800; letter-spacing:.06em; display:flex; align-items:center; gap:14px; }
+.ov-sub{ font-size:13px; color:var(--muted); letter-spacing:.14em; }
+
+/* ---------- results view ---------- */
+#viewResults{ overflow:auto; padding:14px 4px 8px; display:grid; align-content:safe center; }
+.res-grid{ display:grid; grid-template-columns:minmax(0,7fr) minmax(0,5fr); gap:clamp(16px,2.4vw,34px); align-items:start; max-width:1240px; margin:0 auto; }
+.sec-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; border-bottom:1px solid rgba(200,164,92,.25); padding-bottom:8px; }
+.sec-title{ font-size:12px; letter-spacing:.3em; color:var(--brass); font-weight:800; }
+.sec-sub{ font-size:11px; color:var(--faint); letter-spacing:.1em; }
+.st-hdr,.st-row{ display:grid; grid-template-columns:44px minmax(0,1fr) 74px 118px 84px 64px; align-items:center; gap:6px; }
+.st-hdr{ font-size:10px; letter-spacing:.2em; color:var(--faint); font-weight:700; padding:0 14px 7px; }
+.st-hdr .num, .st-row .num{ text-align:right; }
+.st-rows{ display:flex; flex-direction:column; gap:8px; }
+.st-row{ background:linear-gradient(90deg,var(--accBg), rgba(0,0,0,0) 60%), linear-gradient(180deg,var(--surface2),var(--surface));
+  border:1px solid var(--line); border-left:3px solid var(--acc); border-radius:12px; padding:12px 14px;
+  transition:opacity .6s ease, transform .6s cubic-bezier(.2,.7,.3,1.1), box-shadow .6s ease; }
+.st-row.hid{ opacity:0; transform:translateY(30px); }
+.st-row.champ{ border-color:rgba(227,184,78,.55); border-left-color:var(--gold); box-shadow:0 0 46px -10px rgba(227,184,78,.4); }
+.r-rank{ font-size:17px; font-weight:800; color:var(--faint); text-align:center; }
+.medal{ display:inline-grid; place-items:center; width:28px; height:28px; border-radius:50%; font-size:14px; color:#17130a; font-weight:800; }
+.medal.g{ background:linear-gradient(160deg,#f4d47c,#c9982e); box-shadow:0 0 14px rgba(227,184,78,.5); }
+.medal.s{ background:linear-gradient(160deg,#dfe5ef,#9aa3b5); }
+.medal.b{ background:linear-gradient(160deg,#dda06a,#a5672e); }
+.r-who{ display:flex; align-items:center; gap:10px; min-width:0; }
+.r-who .mono{ width:30px; height:30px; font-size:14px; border-radius:8px; flex:none; }
+.r-name{ font-size:16px; font-weight:800; letter-spacing:.14em; }
+.r-pts{ font-size:23px; font-weight:800; }
+.r-wdl{ font-size:13.5px; color:var(--muted); }
+.r-wdl b{ color:var(--text); }
+.r-discs{ font-size:14.5px; font-weight:600; }
+.r-fouls{ font-size:13.5px; color:var(--muted); }
+.r-fouls.has{ color:#eb9a88; font-weight:700; }
+
+/* matrix */
+.mx{ display:grid; grid-template-columns:46px repeat(4,minmax(0,1fr)); gap:5px; }
+.mx-h{ display:grid; place-items:center; padding:5px 0; }
+.mx-h .mono{ width:28px; height:28px; font-size:13px; border-radius:8px; }
+.mx-corner{ display:grid; place-items:center; font-size:9px; letter-spacing:.1em; color:var(--faint); line-height:1.5; text-align:center; }
+.mx-cell{ position:relative; border-radius:9px; border:1px solid var(--line); min-height:52px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; background:var(--surface); }
+.mx-cell.diag{ background:repeating-linear-gradient(45deg, transparent 0 5px, rgba(255,255,255,.035) 5px 7px) var(--bg); border-color:rgba(39,44,54,.6); }
+.mx-cell .sc{ font-size:14px; font-weight:800; letter-spacing:.02em; }
+.mx-cell .wn{ font-size:9px; letter-spacing:.16em; font-weight:700; color:var(--muted); }
+.mx-cell.tbd{ color:var(--faint); font-size:15px; }
+.mx-note{ margin-top:10px; font-size:10.5px; color:var(--faint); letter-spacing:.12em; text-align:right; }
+.res-actions{ margin-top:18px; display:flex; justify-content:flex-end; }
+#btnShare{ font:inherit; font-size:12.5px; font-weight:700; letter-spacing:.14em; color:#141009; cursor:pointer;
+  background:linear-gradient(180deg,#d7b26a,#b4913f); border:0; border-radius:10px; padding:11px 22px; visibility:hidden; }
+
+/* ---------- share card ---------- */
+#shareView{ position:fixed; inset:0; z-index:100; display:grid; place-items:center;
+  background:radial-gradient(120% 100% at 50% 0%, #12151b 0%, #0a0c10 60%, #07080b 100%);
+  opacity:0; visibility:hidden; transition:opacity .5s ease, visibility 0s linear .5s; }
+#shareView.show{ opacity:1; visibility:visible; transition:opacity .5s ease; }
+#btnCloseShare{ position:absolute; top:22px; right:26px; font:inherit; font-size:12px; letter-spacing:.14em; font-weight:700;
+  color:var(--muted); background:transparent; border:1px solid var(--line); border-radius:9px; padding:9px 16px; cursor:pointer; }
+#btnCloseShare:hover{ color:var(--text); border-color:var(--brass-dim); }
+.card{ width:min(94vw,1000px); border-radius:22px; padding:clamp(26px,4vw,52px) clamp(28px,5vw,60px); position:relative; overflow:hidden;
+  background:linear-gradient(160deg,#161b23 0%, #0e1116 70%, #0b0d11 100%);
+  border:1px solid rgba(200,164,92,.45);
+  box-shadow:0 50px 140px -30px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.06);
+  transform:scale(.96) translateY(12px); transition:transform .5s cubic-bezier(.2,.7,.3,1.05); }
+#shareView.show .card{ transform:none; }
+.card::before{ content:""; position:absolute; right:-140px; top:-140px; width:420px; height:420px; border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, rgba(234,230,220,.07), rgba(234,230,220,.02) 55%, transparent 70%);
+  border:1px solid rgba(200,164,92,.12); pointer-events:none; }
+.card-top{ display:flex; justify-content:space-between; align-items:baseline; }
+.card-date{ font-size:12px; letter-spacing:.24em; color:var(--muted); font-weight:700; }
+.card h2{ font-size:clamp(28px,4.4vw,46px); letter-spacing:.2em; font-weight:800; margin:10px 0 4px; }
+.card-rule{ height:2px; background:linear-gradient(90deg,var(--brass), rgba(200,164,92,.08)); margin:14px 0 26px; border-radius:2px; }
+.card-main{ display:grid; grid-template-columns:minmax(0,7fr) minmax(0,5fr); gap:clamp(20px,3vw,44px); align-items:center; }
+.champ-block{ display:flex; align-items:center; gap:clamp(14px,2vw,26px); }
+.champ-block .mono{ width:clamp(72px,9vw,104px); height:clamp(72px,9vw,104px); font-size:clamp(36px,4.6vw,54px); border-radius:20px;
+  box-shadow:0 0 60px -10px var(--accGlow); }
+.champ-label{ font-size:11px; letter-spacing:.42em; color:var(--gold); font-weight:800; }
+.champ-name{ font-size:clamp(38px,5.4vw,62px); font-weight:800; letter-spacing:.1em; line-height:1.05; margin:4px 0 8px; }
+.champ-rec{ font-size:clamp(13px,1.4vw,16px); color:var(--muted); letter-spacing:.06em; }
+.champ-rec b{ color:var(--text); }
+.rank-list{ display:flex; flex-direction:column; gap:9px; }
+.rk{ display:flex; align-items:center; gap:12px; background:rgba(255,255,255,.025); border:1px solid var(--line);
+  border-left:3px solid var(--acc); border-radius:11px; padding:9px 14px; }
+.rk .pos{ font-size:13px; font-weight:800; color:var(--faint); width:22px; }
+.rk .mono{ width:26px; height:26px; font-size:12px; border-radius:7px; }
+.rk .nm{ font-size:15px; font-weight:800; letter-spacing:.12em; flex:1; }
+.rk .pt{ font-size:15px; font-weight:800; }
+.rk .wd{ font-size:11.5px; color:var(--muted); }
+.card-stats{ display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:30px; }
+.stat{ background:rgba(255,255,255,.025); border:1px solid var(--line); border-radius:12px; padding:12px 16px; }
+.stat .k{ font-size:9.5px; letter-spacing:.26em; color:var(--brass); font-weight:700; }
+.stat .v{ font-size:clamp(16px,1.9vw,22px); font-weight:800; margin-top:4px; white-space:nowrap; }
+.stat .v small{ font-size:.62em; color:var(--muted); font-weight:600; }
+.card-foot{ display:flex; justify-content:space-between; align-items:center; margin-top:30px; }
+.foot-monos{ display:flex; gap:8px; }
+.foot-monos .mono{ width:26px; height:26px; font-size:12px; border-radius:7px; }
+.foot-note{ font-size:10.5px; letter-spacing:.24em; color:var(--faint); font-weight:600; }
+
+/* ---------- confetti ---------- */
+#fx{ position:fixed; inset:0; z-index:95; pointer-events:none; }
+
+/* ---------- instant mode ---------- */
+body.instant #viewLive *, body.instant .toast{ transition-duration:1ms!important; animation-duration:1ms!important; }
+body.instant .balance .b-black{ transition-duration:1ms!important; }
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.001s!important; transition-duration:.001s!important; }
+}
+@media (max-width:900px){
+  #app{ overflow:auto; }
+  body{ overflow:auto; }
+  #viewLive{ grid-template-columns:1fr; }
+  #panelB,#panelW{ justify-self:center; }
+  :root{ --bs:min(92vw,480px); }
+  .res-grid,.card-main{ grid-template-columns:1fr; }
+  .card-stats{ grid-template-columns:repeat(2,1fr); }
+}
+</style>
+</head>
+<body data-view="live">
+<div id="app">
+  <header>
+    <div class="brand">
+      <div class="eyebrow">AI MEETUP TOKYO · CLAUDE FABLE 5 MEETUP</div>
+      <h1>CLAUDE REVERSI LEAGUE</h1>
+    </div>
+    <div class="match-ind">
+      <div class="live-badge" id="liveBadge"><span class="dot"></span><span id="liveTxt">LIVE</span></div>
+      <div class="mnum">MATCH <b id="mNow">1</b><span> / 12</span></div>
+    </div>
+    <nav class="tabs">
+      <button id="tabLive" class="on">対局</button>
+      <button id="tabResults">順位表</button>
+    </nav>
+  </header>
+
+  <div class="balance"><div class="b-black" id="balBlack"></div><div class="b-center"></div></div>
+
+  <main>
+    <section id="viewLive">
+      <aside class="panel" id="panelB">
+        <div class="p-top"><span class="mono" id="bMono">?</span>
+          <div><div class="p-name" id="bName">—</div><div class="p-side"><span class="sd black"></span>黒 · BLACK</div></div>
+        </div>
+        <div class="p-count" id="bCount">2</div>
+        <div class="p-think">THINKING<span class="t-dots"><i></i><i></i><i></i></span></div>
+        <div class="p-stats">思考時間 <b id="bLast">—</b> ms <span style="color:var(--faint)">·</span> 平均 <b id="bAvg">—</b> ms</div>
+        <div class="p-foul none" id="bFoul">⚠ 反則 <b>0</b></div>
+      </aside>
+
+      <div class="board-frame">
+        <div class="coords-x" id="coordsX"></div>
+        <div class="coords-y" id="coordsY"></div>
+        <div class="board-felt" id="felt"></div>
+      </div>
+
+      <aside class="panel" id="panelW">
+        <div class="p-top"><span class="mono" id="wMono">?</span>
+          <div><div class="p-name" id="wName">—</div><div class="p-side"><span class="sd white"></span>白 · WHITE</div></div>
+        </div>
+        <div class="p-count" id="wCount">2</div>
+        <div class="p-think">THINKING<span class="t-dots"><i></i><i></i><i></i></span></div>
+        <div class="p-stats">思考時間 <b id="wLast">—</b> ms <span style="color:var(--faint)">·</span> 平均 <b id="wAvg">—</b> ms</div>
+        <div class="p-foul none" id="wFoul">⚠ 反則 <b>0</b></div>
+      </aside>
+    </section>
+
+    <section id="viewResults">
+      <div class="res-grid">
+        <div>
+          <div class="sec-head"><span class="sec-title" id="stTitle">LEAGUE TABLE</span><span class="sec-sub">総当たり 12局 · 勝3点 分1点</span></div>
+          <div class="st-hdr"><span></span><span>MODEL</span><span class="num">勝点</span><span class="num">勝 - 分 - 敗</span><span class="num">石数</span><span class="num">反則</span></div>
+          <div class="st-rows" id="stRows"></div>
+        </div>
+        <div>
+          <div class="sec-head"><span class="sec-title">HEAD-TO-HEAD</span><span class="sec-sub">対戦マトリクス</span></div>
+          <div class="mx" id="mx"></div>
+          <div class="mx-note">縦=黒番 · 横=白番 · セル色=勝者 / 濃さ=石差</div>
+          <div class="res-actions"><button id="btnShare">シェアカード →</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="bottombar">
+    <div class="controls">
+      <button id="btnPlay" title="再生 / 一時停止">❚❚</button>
+      <div class="seg" id="segSpeed">
+        <button data-s="0" class="on">1×</button><button data-s="1">2×</button><button data-s="2">4×</button><button data-s="3">⚡</button>
+      </div>
+      <button id="btnNext">次の対局 ⏭</button>
+      <button id="btnAuto" class="on">連続再生</button>
+    </div>
+    <div class="movecount">MOVE <b id="mvNum">0</b></div>
+    <div class="ticker"><div class="ticker-in" id="tickerIn"></div></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<div id="overlay"><div class="ov-card" id="ovCard"></div></div>
+<canvas id="fx"></canvas>
+
+<div id="shareView">
+  <button id="btnCloseShare">✕ 順位表へ戻る</button>
+  <div class="card" id="shareCard"></div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   ArenaCore — mock implementation of the fixed contract.
+   The real engine replaces this whole block later; everything
+   below the UI marker talks ONLY to window.ArenaCore.
+   ============================================================ */
+(function(){
+  const PLAYERS = [
+    { id:'fable',  name:'Fable',  color:'#9b6de8' },
+    { id:'opus',   name:'Opus',   color:'#c47f1a' },
+    { id:'sonnet', name:'Sonnet', color:'#3d84e0' },
+    { id:'haiku',  name:'Haiku',  color:'#25a86b' },
+  ];
+  const SCHEDULE = [
+    ['fable','opus'],['sonnet','haiku'],['opus','sonnet'],['haiku','fable'],
+    ['fable','sonnet'],['opus','haiku'],['opus','fable'],['haiku','sonnet'],
+    ['sonnet','opus'],['fable','haiku'],['sonnet','fable'],['haiku','opus'],
+  ].map((p,i)=>({ matchId:'m'+String(i+1).padStart(2,'0'), blackId:p[0], whiteId:p[1] }));
+
+  const DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+  const W = [ // positional weights — enough for a plausible-looking game
+    [100,-25, 12,  6,  6, 12,-25,100],
+    [-25,-45,  1,  1,  1,  1,-45,-25],
+    [ 12,  1,  4,  2,  2,  4,  1, 12],
+    [  6,  1,  2,  1,  1,  2,  1,  6],
+    [  6,  1,  2,  1,  1,  2,  1,  6],
+    [ 12,  1,  4,  2,  2,  4,  1, 12],
+    [-25,-45,  1,  1,  1,  1,-45,-25],
+    [100,-25, 12,  6,  6, 12,-25,100],
+  ];
+  // per-model persona: positional noise (skill) / foul rate / think-time base
+  const PERSONA = {
+    fable:  { noise:10, foulRate:0.008, think:750 },
+    opus:   { noise:22, foulRate:0.015, think:600 },
+    sonnet: { noise:34, foulRate:0.020, think:450 },
+    haiku:  { noise:55, foulRate:0.035, think:280 },
+  };
+
+  function newBoard(){
+    const b = Array.from({length:8},()=>Array(8).fill(null));
+    b[3][3]='W'; b[4][4]='W'; b[3][4]='B'; b[4][3]='B';
+    return b;
+  }
+  function flipsFor(b, side, r, c){
+    if (b[r][c]) return [];
+    const out=[];
+    for (const [dr,dc] of DIRS){
+      const line=[]; let rr=r+dr, cc=c+dc;
+      while (rr>=0 && rr<8 && cc>=0 && cc<8 && b[rr][cc] && b[rr][cc]!==side){ line.push([rr,cc]); rr+=dr; cc+=dc; }
+      if (line.length && rr>=0 && rr<8 && cc>=0 && cc<8 && b[rr][cc]===side) out.push(...line);
+    }
+    return out;
+  }
+  function legalMoves(b, side){
+    const ms=[];
+    for (let r=0;r<8;r++) for (let c=0;c<8;c++){
+      const f=flipsFor(b,side,r,c);
+      if (f.length) ms.push({r,c,flips:f});
+    }
+    return ms;
+  }
+  function count(b){
+    let black=0, white=0;
+    for (const row of b) for (const v of row){ if(v==='B') black++; else if(v==='W') white++; }
+    return {black, white};
+  }
+
+  const results = {}; // matchId -> {counts, winnerId, fouls}
+
+  function runMatch(matchId, cb){
+    const m = SCHEDULE.find(s=>s.matchId===matchId);
+    const idOf = { B:m.blackId, W:m.whiteId };
+    let b = newBoard(), turn='B', moveNumber=0;
+    const fouls = { [m.blackId]:0, [m.whiteId]:0 };
+
+    function pick(side, moves){
+      const p = PERSONA[idOf[side]];
+      if (Math.random() < p.foulRate){ // illegal attempt → random legal substitution
+        return { mv: moves[(Math.random()*moves.length)|0], foul:true };
+      }
+      let best=null, bestScore=-1e9;
+      for (const mv of moves){
+        const s = W[mv.r][mv.c] + mv.flips.length*1.5 + Math.random()*p.noise;
+        if (s>bestScore){ bestScore=s; best=mv; }
+      }
+      return { mv:best, foul:false };
+    }
+    function step(){
+      const moves = legalMoves(b, turn);
+      const other = turn==='B' ? 'W' : 'B';
+      if (!moves.length){
+        if (!legalMoves(b, other).length) return finish();
+        cb.onPass && cb.onPass({ player: idOf[turn] });
+        turn = other; return setTimeout(step, 0);
+      }
+      const { mv, foul } = pick(turn, moves);
+      if (foul) fouls[idOf[turn]]++;
+      b[mv.r][mv.c] = turn;
+      for (const [fr,fc] of mv.flips) b[fr][fc] = turn;
+      moveNumber++;
+      const p = PERSONA[idOf[turn]];
+      const thinkMs = Math.round(p.think * (0.45 + Math.random()*1.4));
+      cb.onMove && cb.onMove({
+        player: idOf[turn], row: mv.r, col: mv.c,
+        flips: mv.flips.map(f=>({row:f[0], col:f[1]})),
+        board: b.map(r=>r.slice()), counts: count(b),
+        moveNumber, thinkMs, wasFoul: foul,
+      });
+      turn = other; setTimeout(step, 0);
+    }
+    function finish(){
+      const counts = count(b);
+      const winnerId = counts.black>counts.white ? m.blackId : counts.white>counts.black ? m.whiteId : null;
+      results[matchId] = { counts, winnerId, fouls: {...fouls}, blackId:m.blackId, whiteId:m.whiteId };
+      cb.onEnd && cb.onEnd({ matchId, counts, winnerId, fouls: {...fouls} });
+    }
+    setTimeout(step, 0);
+  }
+
+  function getStandings(){
+    const t = {};
+    for (const p of PLAYERS) t[p.id] = { id:p.id, points:0, wins:0, draws:0, losses:0, discs:0, fouls:0 };
+    for (const r of Object.values(results)){
+      t[r.blackId].discs += r.counts.black; t[r.whiteId].discs += r.counts.white;
+      t[r.blackId].fouls += r.fouls[r.blackId]; t[r.whiteId].fouls += r.fouls[r.whiteId];
+      if (r.winnerId === null){
+        t[r.blackId].draws++; t[r.whiteId].draws++; t[r.blackId].points++; t[r.whiteId].points++;
+      } else {
+        const loser = r.winnerId===r.blackId ? r.whiteId : r.blackId;
+        t[r.winnerId].wins++; t[r.winnerId].points+=3; t[loser].losses++;
+      }
+    }
+    return PLAYERS.map(p=>t[p.id]);
+  }
+
+  window.ArenaCore = {
+    getPlayers: ()=>PLAYERS.map(p=>({...p})),
+    getSchedule: ()=>SCHEDULE.map(s=>({...s})),
+    runMatch, getStandings,
+  };
+})();
+
+/* ============================================================
+   Arena UI — depends only on window.ArenaCore
+   ============================================================ */
+(function(){
+  const $ = s=>document.querySelector(s);
+  const sleep = ms=>new Promise(r=>setTimeout(r, ms));
+  const clamp = (v,a,b)=>Math.max(a, Math.min(b, v));
+  const LETTERS = 'abcdefgh';
+  const notation = (r,c)=>LETTERS[c]+(r+1);
+
+  /* ---- color helpers (precomputed tints; no color-mix dependency) ---- */
+  const hex2rgb = h=>{ const n=parseInt(h.slice(1),16); return [n>>16&255, n>>8&255, n&255]; };
+  const tint = (h,k)=>{ const [r,g,b]=hex2rgb(h); return `rgb(${Math.round(r+(255-r)*k)},${Math.round(g+(255-g)*k)},${Math.round(b+(255-b)*k)})`; };
+  const alpha = (h,a)=>{ const [r,g,b]=hex2rgb(h); return `rgba(${r},${g},${b},${a})`; };
+
+  /* ---- ArenaCore boundary ---- */
+  const players = ArenaCore.getPlayers();
+  const schedule = ArenaCore.getSchedule();
+  const P = {}; players.forEach(p=>{ P[p.id] = { ...p, hi:tint(p.color,.38), bg:alpha(p.color,.16), glow:alpha(p.color,.45) }; });
+  const NAME = id=>P[id].name.toUpperCase();
+
+  /* ---- playback state ---- */
+  const SPD = [{m:1},{m:2},{m:4},{m:0}]; // m=0 → instant
+  let spd = SPD[0];
+  let paused = false, pauseWaiters = [];
+  let skipping = false, auto = true;
+  let betweenWaiter = null;
+  let leagueDone = false;
+  let curMatch = null;           // {matchId, blackId, whiteId}
+  let uiBoard = [];              // 'black'|'white'|null per cell
+  let standingsCache = ArenaCore.getStandings();
+  const records = [];            // UI-side match records (from callbacks only)
+  let totalMoves = 0, biggest = null;
+
+  const gate = ()=> paused ? new Promise(r=>pauseWaiters.push(r)) : Promise.resolve();
+  async function wait(ms){
+    if (skipping) return;
+    await sleep(spd.m===0 ? Math.min(ms,25) : ms/spd.m);
+    await gate();
+  }
+
+  /* ---- event queue (engine → paced playback) ---- */
+  const q = []; let qWaiter = null;
+  function push(ev){ q.push(ev); if (qWaiter){ const w=qWaiter; qWaiter=null; w(); } }
+  async function nextEvent(){ while(!q.length){ await new Promise(r=>qWaiter=r); } return q.shift(); }
+
+  /* ---- board DOM ---- */
+  const felt = $('#felt');
+  const cells = [];
+  for (let r=0;r<8;r++) for (let c=0;c<8;c++){
+    const el = document.createElement('div');
+    el.className = 'cell';
+    felt.appendChild(el);
+    cells.push({ el, dw:null, disc:null });
+  }
+  for (const [x,y] of [[25,25],[75,25],[25,75],[75,75]]){
+    const s = document.createElement('div'); s.className='star'; s.style.left=x+'%'; s.style.top=y+'%'; felt.appendChild(s);
+  }
+  const ring = document.createElement('div'); ring.id='ring'; felt.appendChild(ring);
+  for (let i=0;i<8;i++){
+    $('#coordsX').insertAdjacentHTML('beforeend', `<span>${LETTERS[i]}</span>`);
+    $('#coordsY').insertAdjacentHTML('beforeend', `<span>${i+1}</span>`);
+  }
+  const cellAt = (r,c)=>cells[r*8+c];
+
+  function makeDisc(side){
+    const dw = document.createElement('div'); dw.className='dw';
+    const disc = document.createElement('div'); disc.className='disc '+side;
+    disc.innerHTML = '<div class="face b"></div><div class="face w"></div>';
+    dw.appendChild(disc);
+    return { dw, disc };
+  }
+  function placeDisc(r, c, side, animate){
+    const cell = cellAt(r,c);
+    if (cell.dw) cell.dw.remove();
+    const d = makeDisc(side);
+    if (animate) d.dw.classList.add('drop');
+    cell.el.appendChild(d.dw);
+    cell.dw = d.dw; cell.disc = d.disc;
+    uiBoard[r*8+c] = side;
+  }
+  function flipDisc(r, c, side){
+    const cell = cellAt(r,c);
+    if (!cell.disc) return placeDisc(r,c,side,false);
+    cell.dw.classList.remove('hop'); void cell.dw.offsetWidth;
+    cell.dw.classList.add('hop');
+    cell.disc.classList.toggle('white', side==='white');
+    cell.disc.classList.toggle('black', side==='black');
+    uiBoard[r*8+c] = side;
+  }
+  function clearBoard(){
+    for (const cell of cells){ if (cell.dw){ cell.dw.remove(); cell.dw=null; cell.disc=null; } }
+    uiBoard = Array(64).fill(null);
+    ring.style.display='none';
+    placeDisc(3,3,'white',false); placeDisc(4,4,'white',false);
+    placeDisc(3,4,'black',false); placeDisc(4,3,'black',false);
+  }
+  function setRing(r, c, color){
+    const cell = cellAt(r,c);
+    cell.el.appendChild(ring);
+    ring.style.setProperty('--rc', color);
+    ring.style.display='block';
+  }
+  function reconcile(board){ // silent sync with engine truth
+    for (let r=0;r<8;r++) for (let c=0;c<8;c++){
+      const want = board[r][c]==='B' ? 'black' : board[r][c]==='W' ? 'white' : null;
+      const have = uiBoard[r*8+c];
+      if (want===have) continue;
+      const cell = cellAt(r,c);
+      if (!want){ if(cell.dw){cell.dw.remove(); cell.dw=null; cell.disc=null;} uiBoard[r*8+c]=null; }
+      else placeDisc(r,c,want,false);
+    }
+  }
+
+  /* ---- panels / balance / ticker ---- */
+  const ui = {
+    b:{ mono:$('#bMono'), name:$('#bName'), count:$('#bCount'), last:$('#bLast'), avg:$('#bAvg'), foul:$('#bFoul'), panel:$('#panelB') },
+    w:{ mono:$('#wMono'), name:$('#wName'), count:$('#wCount'), last:$('#wLast'), avg:$('#wAvg'), foul:$('#wFoul'), panel:$('#panelW') },
+  };
+  let thinkLog = { b:[], w:[] }, foulCt = { b:0, w:0 };
+
+  function setPanel(sideKey, pid){
+    const s = ui[sideKey], p = P[pid];
+    s.mono.textContent = p.name[0];
+    s.name.textContent = NAME(pid);
+    s.panel.style.setProperty('--acc', p.color);
+    s.panel.style.setProperty('--accHi', p.hi);
+    s.panel.style.setProperty('--accBg', p.bg);
+    s.panel.style.setProperty('--accGlow', p.glow);
+    s.count.textContent = '2'; s.count.dataset.v = '2';
+    s.last.textContent = '—'; s.avg.textContent = '—';
+    s.foul.classList.add('none'); s.foul.querySelector('b').textContent='0';
+  }
+  function sideKeyOf(pid){ return pid===curMatch.blackId ? 'b' : 'w'; }
+  function setThinking(pid){
+    ui.b.panel.classList.toggle('turn', pid!==null && sideKeyOf(pid)==='b');
+    ui.w.panel.classList.toggle('turn', pid!==null && sideKeyOf(pid)==='w');
+  }
+  function tweenNum(el, to, ms){
+    const from = +el.dataset.v || 0;
+    el.dataset.v = to;
+    if (from===to || ms<40){ el.textContent = to; return; }
+    const t0 = performance.now();
+    (function f(t){
+      const k = clamp((t-t0)/ms, 0, 1);
+      el.textContent = Math.round(from + (to-from)*(1-Math.pow(1-k,3)));
+      if (k<1) requestAnimationFrame(f);
+    })(t0);
+  }
+  function updateCounts(counts, ms){
+    tweenNum(ui.b.count, counts.black, ms);
+    tweenNum(ui.w.count, counts.white, ms);
+    $('#balBlack').style.width = (100*counts.black/(counts.black+counts.white))+'%';
+  }
+  function updateThink(pid, thinkMs){
+    const k = sideKeyOf(pid), s = ui[k];
+    thinkLog[k].push(thinkMs);
+    s.last.textContent = thinkMs;
+    s.avg.textContent = Math.round(thinkLog[k].reduce((a,b)=>a+b,0)/thinkLog[k].length);
+  }
+  function bumpFoul(pid){
+    const k = sideKeyOf(pid), s = ui[k];
+    foulCt[k]++;
+    s.foul.classList.remove('none');
+    s.foul.querySelector('b').textContent = foulCt[k];
+  }
+
+  const tickerIn = $('#tickerIn'), ticker = document.querySelector('.ticker');
+  function logMove(ev, side){
+    const foul = ev.wasFoul ? '<span class="fl">⚠</span>' : '';
+    tickerIn.querySelectorAll('.mv.now').forEach(e=>e.classList.remove('now'));
+    tickerIn.insertAdjacentHTML('beforeend',
+      `<span class="mv now"><span class="no">${ev.moveNumber}</span><i class="md ${side}"></i><b>${notation(ev.row,ev.col)}</b>${foul}</span>`);
+    ticker.scrollLeft = ticker.scrollWidth;
+    $('#mvNum').textContent = ev.moveNumber;
+  }
+  function logPass(pid){
+    tickerIn.insertAdjacentHTML('beforeend', `<span class="mv"><b style="color:var(--faint)">pass</b></span>`);
+    ticker.scrollLeft = ticker.scrollWidth;
+  }
+
+  /* ---- toasts ---- */
+  function toast(msg, kind, color){
+    const box = $('#toasts');
+    const d = document.createElement('div');
+    d.className = 'toast' + (kind ? ' '+kind : '');
+    if (color) d.style.borderLeftColor = color;
+    d.textContent = msg;
+    box.appendChild(d);
+    while (box.children.length>3) box.firstChild.remove();
+    const life = spd.m===0 ? 500 : 2600/spd.m;
+    setTimeout(()=>{ d.classList.add('out'); setTimeout(()=>d.remove(), 320); }, life);
+  }
+
+  /* ---- overlay ---- */
+  const overlay = $('#overlay'), ovCard = $('#ovCard');
+  async function showOverlay(html, ms){
+    ovCard.innerHTML = html;
+    overlay.classList.add('show');
+    await wait(ms);
+    overlay.classList.remove('show');
+    await wait(380);
+  }
+  const discGlyph = s=>`<span class="sd ${s}" style="width:.55em;height:.55em"></span>`;
+  function interstitialHTML(m, idx){
+    const b=P[m.blackId], w=P[m.whiteId];
+    return `<div class="ov-eyebrow">MATCH ${idx+1} / 12 — 総当たりリーグ</div>
+      <div class="ov-main"><span style="color:${b.hi}">${NAME(m.blackId)}</span><span class="vs">vs</span><span style="color:${w.hi}">${NAME(m.whiteId)}</span></div>
+      <div class="ov-sub">${NAME(m.blackId)} = 黒 ● &nbsp;·&nbsp; ○ 白 = ${NAME(m.whiteId)}</div>`;
+  }
+  function endHTML(ev, m, moves){
+    const win = ev.winnerId ? P[ev.winnerId] : null;
+    const title = win ? `<span style="color:${win.hi}">${NAME(ev.winnerId)}</span> WINS` : 'DRAW';
+    const foulsN = ev.fouls[m.blackId]+ev.fouls[m.whiteId];
+    const margin = Math.abs(ev.counts.black-ev.counts.white);
+    return `<div class="ov-eyebrow">MATCH ${schedule.indexOf(m)+1} — FINAL</div>
+      <div class="ov-main">${title}</div>
+      <div class="ov-score">${discGlyph('black')} ${ev.counts.black} <span style="color:var(--faint)">–</span> ${ev.counts.white} ${discGlyph('white')}</div>
+      <div class="ov-sub">${moves}手 · 石差 ${margin} · 反則 ${foulsN}</div>`;
+  }
+
+  /* ---- standings & matrix ---- */
+  const stRows = $('#stRows');
+  const rowById = {};
+  for (const p of players){
+    const row = document.createElement('div');
+    row.className = 'st-row';
+    row.style.setProperty('--acc', p.color);
+    row.style.setProperty('--accBg', P[p.id].bg);
+    row.innerHTML = `<span class="r-rank">–</span>
+      <span class="r-who"><span class="mono" style="--acc:${p.color};--accHi:${P[p.id].hi};--accBg:${P[p.id].bg}">${p.name[0]}</span><span class="r-name">${NAME(p.id)}</span></span>
+      <span class="r-pts num">0</span>
+      <span class="r-wdl num"><b>0</b> - 0 - 0</span>
+      <span class="r-discs num">0</span>
+      <span class="r-fouls num">0</span>`;
+    stRows.appendChild(row);
+    rowById[p.id] = row;
+  }
+  function sortStandings(st){
+    return [...st].sort((a,b)=> b.points-a.points || b.discs-a.discs || b.wins-a.wins);
+  }
+  function renderStandings(st, final){
+    const arr = sortStandings(st);
+    arr.forEach((s,i)=>{
+      const row = rowById[s.id];
+      stRows.appendChild(row);
+      const rk = row.querySelector('.r-rank');
+      if (final && i<3) rk.innerHTML = `<span class="medal ${['g','s','b'][i]}">${i+1}</span>`;
+      else rk.textContent = i+1;
+      row.querySelector('.r-pts').textContent = s.points;
+      row.querySelector('.r-wdl').innerHTML = `<b>${s.wins}</b> - ${s.draws} - ${s.losses}`;
+      row.querySelector('.r-discs').textContent = s.discs;
+      const rf = row.querySelector('.r-fouls');
+      rf.textContent = s.fouls;
+      rf.classList.toggle('has', s.fouls>0);
+    });
+    return arr;
+  }
+  renderStandings(standingsCache, false);
+
+  const mx = $('#mx'); const mxCells = {};
+  mx.insertAdjacentHTML('beforeend', `<div class="mx-corner">黒▼<br>白▶</div>`);
+  for (const p of players) mx.insertAdjacentHTML('beforeend',
+    `<div class="mx-h"><span class="mono" style="--acc:${p.color};--accHi:${P[p.id].hi};--accBg:${P[p.id].bg}">${p.name[0]}</span></div>`);
+  for (const rp of players){
+    mx.insertAdjacentHTML('beforeend',
+      `<div class="mx-h"><span class="mono" style="--acc:${rp.color};--accHi:${P[rp.id].hi};--accBg:${P[rp.id].bg}">${rp.name[0]}</span></div>`);
+    for (const cp of players){
+      const cell = document.createElement('div');
+      if (rp.id===cp.id){ cell.className='mx-cell diag'; }
+      else { cell.className='mx-cell tbd'; cell.textContent='·'; mxCells[rp.id+'|'+cp.id]=cell; }
+      mx.appendChild(cell);
+    }
+  }
+  function fillMatrix(rec){
+    const cell = mxCells[rec.blackId+'|'+rec.whiteId];
+    cell.className = 'mx-cell';
+    const margin = Math.abs(rec.counts.black-rec.counts.white);
+    if (rec.winnerId){
+      const a = 0.14 + 0.5*Math.min(margin,40)/40;
+      cell.style.background = alpha(P[rec.winnerId].color, a);
+      cell.style.borderColor = alpha(P[rec.winnerId].color, .5);
+      cell.innerHTML = `<span class="sc">${rec.counts.black}–${rec.counts.white}</span><span class="wn">${NAME(rec.winnerId)}</span>`;
+    } else {
+      cell.style.background = 'rgba(255,255,255,.06)';
+      cell.innerHTML = `<span class="sc">${rec.counts.black}–${rec.counts.white}</span><span class="wn">DRAW</span>`;
+    }
+  }
+
+  /* ---- move animation ---- */
+  function animateMove(ev){
+    return new Promise(res=>{
+      const side = sideKeyOf(ev.player)==='b' ? 'black' : 'white';
+      const inst = spd.m===0 || skipping;
+      const stag = inst ? 0 : 82/spd.m;
+      const fd   = inst ? 1 : 470/spd.m;
+      felt.style.setProperty('--fd', fd+'ms');
+      placeDisc(ev.row, ev.col, side, !inst);
+      setRing(ev.row, ev.col, P[ev.player].hi);
+      let maxd = 0;
+      for (const f of ev.flips){
+        const d = Math.max(Math.abs(f.row-ev.row), Math.abs(f.col-ev.col));
+        maxd = Math.max(maxd, d);
+        if (inst) flipDisc(f.row, f.col, side);
+        else setTimeout(()=>flipDisc(f.row, f.col, side), d*stag);
+      }
+      const total = inst ? 0 : maxd*stag + fd + 50;
+      setTimeout(()=>{
+        reconcile(ev.board);
+        updateCounts(ev.counts, inst?0:450);
+        res();
+      }, total);
+    });
+  }
+
+  /* ---- match playback ---- */
+  async function playMatch(idx){
+    skipping = false;
+    curMatch = schedule[idx];
+    thinkLog = { b:[], w:[] }; foulCt = { b:0, w:0 };
+    $('#mNow').textContent = idx+1;
+    $('#mvNum').textContent = 0;
+    tickerIn.innerHTML = '';
+    setPanel('b', curMatch.blackId);
+    setPanel('w', curMatch.whiteId);
+    clearBoard();
+    updateCounts({black:2, white:2}, 0);
+    await showOverlay(interstitialHTML(curMatch, idx), 2100);
+
+    ArenaCore.runMatch(curMatch.matchId, {
+      onMove: ev=>push({t:'move', ...ev}),
+      onPass: ev=>push({t:'pass', ...ev}),
+      onEnd:  ev=>push({t:'end', ...ev}),
+    });
+
+    let moves = 0;
+    while (true){
+      const ev = await nextEvent();
+      await gate();
+      if (ev.t==='move'){
+        setThinking(ev.player);
+        await wait(clamp(ev.thinkMs, 220, 1300));
+        setThinking(null);
+        if (ev.wasFoul){
+          bumpFoul(ev.player);
+          toast(`⚠ 反則 — ${NAME(ev.player)} の非合法手をランダムな合法手で代替`, 'foul');
+        }
+        await animateMove(ev);
+        logMove(ev, sideKeyOf(ev.player)==='b'?'black':'white');
+        updateThink(ev.player, ev.thinkMs);
+        moves = ev.moveNumber;
+        await wait(130);
+      } else if (ev.t==='pass'){
+        toast(`パス — ${NAME(ev.player)} に合法手がありません`, '', P[ev.player].hi);
+        logPass(ev.player);
+        await wait(850);
+      } else { // end
+        totalMoves += moves;
+        setThinking(null);
+        standingsCache = ArenaCore.getStandings();
+        const rec = { ...curMatch, counts:ev.counts, winnerId:ev.winnerId, fouls:ev.fouls, moves };
+        records.push(rec);
+        fillMatrix(rec);
+        renderStandings(standingsCache, false);
+        const margin = Math.abs(ev.counts.black-ev.counts.white);
+        if (ev.winnerId && (!biggest || margin>biggest.margin)){
+          const loser = ev.winnerId===curMatch.blackId ? curMatch.whiteId : curMatch.blackId;
+          const wc = Math.max(ev.counts.black, ev.counts.white), lc = Math.min(ev.counts.black, ev.counts.white);
+          biggest = { margin, txt:`${NAME(ev.winnerId)} ${wc}–${lc} ${NAME(loser)}` };
+        }
+        await wait(550);
+        await showOverlay(endHTML(ev, curMatch, moves), 2600);
+        break;
+      }
+    }
+  }
+
+  /* ---- league flow ---- */
+  async function runLeague(){
+    for (let i=0;i<schedule.length;i++){
+      await playMatch(i);
+      if (!auto && i<schedule.length-1) await new Promise(r=>betweenWaiter=r);
+    }
+    leagueDone = true;
+    skipping = false;
+    document.body.classList.remove('instant');
+    $('#liveBadge').classList.add('final');
+    $('#liveTxt').textContent = 'FINAL';
+    $('#btnShare').style.visibility = 'visible';
+    await sleep(800);
+    setView('results');
+    await runCeremony();
+    buildShareCard();
+    showShare(true);
+  }
+
+  /* ---- ceremony + confetti ---- */
+  async function runCeremony(){
+    $('#stTitle').textContent = 'FINAL STANDINGS — 表彰';
+    const arr = renderStandings(standingsCache, true);
+    const rows = arr.map(s=>rowById[s.id]);
+    rows.forEach(r=>r.classList.add('hid'));
+    await sleep(900);
+    rows[3].classList.remove('hid'); await sleep(1150);
+    rows[2].classList.remove('hid'); await sleep(1250);
+    rows[1].classList.remove('hid'); await sleep(1500);
+    rows[0].classList.remove('hid');
+    rows[0].classList.add('champ');
+    confetti(P[arr[0].id].color);
+    await sleep(4600);
+  }
+
+  function confetti(champColor){
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const cv = $('#fx'), ctx = cv.getContext('2d');
+    cv.width = innerWidth; cv.height = innerHeight;
+    const colors = [champColor, tint(champColor,.4), '#c8a45c', '#eae6dc'];
+    const parts = [];
+    for (let i=0;i<130;i++){
+      const fromLeft = i%2===0;
+      parts.push({
+        x: fromLeft ? -8 : cv.width+8, y: cv.height*0.72,
+        vx: (fromLeft?1:-1)*(3.5+Math.random()*6.5), vy: -(8.5+Math.random()*7),
+        w: 5+Math.random()*6, h: 3+Math.random()*4,
+        a: Math.random()*Math.PI, va: (Math.random()-.5)*.32,
+        c: colors[i%colors.length], life: 1,
+      });
+    }
+    const t0 = performance.now();
+    (function frame(t){
+      const el = t-t0;
+      ctx.clearRect(0,0,cv.width,cv.height);
+      let alive = 0;
+      for (const p of parts){
+        p.vy += 0.16; p.x += p.vx; p.y += p.vy; p.a += p.va; p.vx *= 0.992;
+        if (el>2600) p.life -= 0.03;
+        if (p.life<=0 || p.y>cv.height+20) continue;
+        alive++;
+        ctx.save(); ctx.globalAlpha = Math.max(p.life,0); ctx.translate(p.x,p.y); ctx.rotate(p.a);
+        ctx.fillStyle = p.c; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h); ctx.restore();
+      }
+      if (alive>0 && el<6000) requestAnimationFrame(frame);
+      else ctx.clearRect(0,0,cv.width,cv.height);
+    })(t0);
+  }
+
+  /* ---- share card ---- */
+  function buildShareCard(){
+    const arr = sortStandings(standingsCache);
+    const ch = arr[0], chP = P[ch.id];
+    const totalFouls = arr.reduce((a,s)=>a+s.fouls,0);
+    const d = new Date();
+    const date = `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+    $('#shareCard').innerHTML = `
+      <div class="card-top"><span class="eyebrow">AI MEETUP TOKYO · CLAUDE FABLE 5 MEETUP</span><span class="card-date">${date}</span></div>
+      <h2>CLAUDE REVERSI LEAGUE</h2>
+      <div class="eyebrow" style="letter-spacing:.24em; color:var(--muted)">4つのAIモデルが書いたリバーシAIによる総当たりリーグ戦 — 全12局</div>
+      <div class="card-rule"></div>
+      <div class="card-main">
+        <div class="champ-block">
+          <span class="mono" style="--acc:${chP.color};--accHi:${chP.hi};--accBg:${chP.bg};--accGlow:${chP.glow}">${chP.name[0]}</span>
+          <div>
+            <div class="champ-label">CHAMPION</div>
+            <div class="champ-name" style="color:${chP.hi}">${NAME(ch.id)}</div>
+            <div class="champ-rec">勝点 <b>${ch.points}</b> · <b>${ch.wins}</b>勝 ${ch.draws}分 ${ch.losses}敗 · 石数 <b>${ch.discs}</b></div>
+          </div>
+        </div>
+        <div class="rank-list">${arr.slice(1).map((s,i)=>`
+          <div class="rk" style="--acc:${P[s.id].color}">
+            <span class="pos">${i+2}</span>
+            <span class="mono" style="--acc:${P[s.id].color};--accHi:${P[s.id].hi};--accBg:${P[s.id].bg}">${P[s.id].name[0]}</span>
+            <span class="nm">${NAME(s.id)}</span>
+            <span class="wd">${s.wins}勝 ${s.draws}分 ${s.losses}敗</span>
+            <span class="pt">${s.points}<small style="font-size:.6em;color:var(--muted)"> pt</small></span>
+          </div>`).join('')}
+        </div>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="k">MATCHES</div><div class="v">12 <small>局</small></div></div>
+        <div class="stat"><div class="k">TOTAL MOVES</div><div class="v">${totalMoves} <small>手</small></div></div>
+        <div class="stat"><div class="k">BIGGEST WIN</div><div class="v" style="font-size:15px; line-height:1.35">${biggest?biggest.txt:'—'}</div></div>
+        <div class="stat"><div class="k">FOULS</div><div class="v">${totalFouls} <small>回</small></div></div>
+      </div>
+      <div class="card-foot">
+        <div class="foot-monos">${players.map(p=>`<span class="mono" style="--acc:${p.color};--accHi:${P[p.id].hi};--accBg:${P[p.id].bg}">${p.name[0]}</span>`).join('')}</div>
+        <div class="foot-note">4 AI MODELS · DOUBLE ROUND-ROBIN · ONE BOARD</div>
+      </div>`;
+  }
+  function showShare(on){ $('#shareView').classList.toggle('show', on); }
+
+  /* ---- views / controls ---- */
+  function setView(v){
+    document.body.dataset.view = v;
+    $('#tabLive').classList.toggle('on', v==='live');
+    $('#tabResults').classList.toggle('on', v==='results');
+  }
+  $('#tabLive').onclick = ()=>setView('live');
+  $('#tabResults').onclick = ()=>setView('results');
+  $('#btnShare').onclick = ()=>showShare(true);
+  $('#btnCloseShare').onclick = ()=>showShare(false);
+
+  $('#btnPlay').onclick = ()=>{
+    paused = !paused;
+    $('#btnPlay').textContent = paused ? '▶' : '❚❚';
+    if (!paused){ pauseWaiters.forEach(r=>r()); pauseWaiters=[]; }
+  };
+  $('#segSpeed').querySelectorAll('button').forEach(b=>{
+    b.onclick = ()=>{
+      $('#segSpeed').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+      spd = SPD[+b.dataset.s];
+      document.body.classList.toggle('instant', spd.m===0 && !leagueDone);
+    };
+  });
+  $('#btnNext').onclick = ()=>{
+    if (leagueDone) return;
+    if (betweenWaiter){ const w=betweenWaiter; betweenWaiter=null; w(); return; }
+    skipping = true;
+    if (paused) $('#btnPlay').onclick();
+  };
+  $('#btnAuto').onclick = ()=>{
+    auto = !auto;
+    $('#btnAuto').classList.toggle('on', auto);
+    if (auto && betweenWaiter){ const w=betweenWaiter; betweenWaiter=null; w(); }
+  };
+
+  /* ---- go ---- */
+  setView('live');
+  setTimeout(runLeague, 500);
+})();
+</script>
+</body>
+</html>
