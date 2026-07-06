@@ -54,7 +54,7 @@ Temporary Items
 
 ### Node ###
 # Logs
-logs
+# 対戦ログ(logs/)はrepoに含めるため、テンプレート由来の logs 除外は外している
 *.log
 npm-debug.log*
 yarn-debug.log*
