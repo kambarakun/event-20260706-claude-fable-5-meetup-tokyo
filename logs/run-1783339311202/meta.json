@@ -1,0 +1,23 @@
+{
+  "runId": "run-1783339311202",
+  "baseSeed": 1783339311202,
+  "rounds": 1000,
+  "gamesTotal": 12000,
+  "workers": 12,
+  "players": [
+    "fable",
+    "opus",
+    "sonnet",
+    "haiku"
+  ],
+  "schemaVersion": 1,
+  "node": "v24.16.0",
+  "gitSha": "3915e4a",
+  "engineSha256": "cf83b58273402eb6",
+  "startedAt": "2026-07-06T12:01:51.219Z",
+  "finishedAt": "2026-07-06T12:16:11.844Z",
+  "gamesDone": 3512,
+  "foulsTotal": 963,
+  "aborted": true,
+  "abortReason": "ワーカー数増強(12→20)のため停止。残局は後続runで実施"
+}
