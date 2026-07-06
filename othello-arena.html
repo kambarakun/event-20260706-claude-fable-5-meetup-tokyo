@@ -154,8 +154,246 @@ let activeRng = mulberry32(1); // 対局ごとにエンジンが差し替える
 function ARENA_RNG(){ return activeRng(); }
 
 const PLAYERS = {
-  fable: function decideMove(board, myColor, legalMoves){
-    return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
+  fable: function decideMove(board, myColor, legalMoves) {
+    const T0 = Date.now();
+    const LIMIT = 80; // ms; arena fouls at >100ms, keep margin for GC/timer jitter
+    if (legalMoves.length === 1) return { row: legalMoves[0].row, col: legalMoves[0].col };
+
+    // ---- bitboards: bit index = row*8+col, P = side to move, O = opponent ----
+    const FULL = 0xFFFFFFFFFFFFFFFFn;
+    const EW = 0x7E7E7E7E7E7E7E7En;  // not col a/h (guards horizontal & diagonal wrap)
+    const NA = 0xFEFEFEFEFEFEFEFEn;  // not col a
+    const NH = 0x7F7F7F7F7F7F7F7Fn;  // not col h
+    const CORNER = 0x8100000000000081n;
+    const W = [
+      100, -20, 12, 8, 8, 12, -20, 100,
+      -20, -35, -4, -2, -2, -4, -35, -20,
+      12, -4, 4, 1, 1, 4, -4, 12,
+      8, -2, 1, 0, 0, 1, -2, 8,
+      8, -2, 1, 0, 0, 1, -2, 8,
+      12, -4, 4, 1, 1, 4, -4, 12,
+      -20, -35, -4, -2, -2, -4, -35, -20,
+      100, -20, 12, 8, 8, 12, -20, 100,
+    ];
+    // per corner: [corner bit, X square, C squares]
+    const TRIS = [
+      [1n, 1n << 9n, (1n << 1n) | (1n << 8n)],
+      [1n << 7n, 1n << 14n, (1n << 6n) | (1n << 15n)],
+      [1n << 56n, 1n << 49n, (1n << 48n) | (1n << 57n)],
+      [1n << 63n, 1n << 54n, (1n << 55n) | (1n << 62n)],
+    ];
+
+    let P = 0n, O = 0n;
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const v = board[r][c];
+        if (v === 0) continue;
+        const b = 1n << BigInt(r * 8 + c);
+        if (v === myColor) P |= b; else O |= b;
+      }
+    }
+
+    const popc = (b) => {
+      let v = Number(b & 0xFFFFFFFFn);
+      v -= (v >>> 1) & 0x55555555;
+      v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+      const lo = (((v + (v >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24;
+      v = Number(b >> 32n);
+      v -= (v >>> 1) & 0x55555555;
+      v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+      return lo + ((((v + (v >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24);
+    };
+    const idxOf = (b) => {
+      const lo = Number(b & 0xFFFFFFFFn);
+      return lo !== 0 ? 31 - Math.clz32(lo) : 63 - Math.clz32(Number(b >> 32n));
+    };
+
+    function movesBB(p, o) {
+      const om = o & EW;
+      let m, t;
+      t = (p << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om;
+      m = t << 1n;
+      t = (p >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om;
+      m |= t >> 1n;
+      t = (p << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o;
+      m |= t << 8n;
+      t = (p >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o;
+      m |= t >> 8n;
+      t = (p << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om;
+      m |= t << 7n;
+      t = (p >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om;
+      m |= t >> 7n;
+      t = (p << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om;
+      m |= t << 9n;
+      t = (p >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om;
+      m |= t >> 9n;
+      return m & ~(p | o) & FULL;
+    }
+
+    function flipsBB(p, o, x) {
+      const om = o & EW;
+      let f = 0n, t;
+      t = (x << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om; t |= (t << 1n) & om;
+      if (((t << 1n) & p) !== 0n) f |= t;
+      t = (x >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om; t |= (t >> 1n) & om;
+      if (((t >> 1n) & p) !== 0n) f |= t;
+      t = (x << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o; t |= (t << 8n) & o;
+      if (((t << 8n) & p) !== 0n) f |= t;
+      t = (x >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o; t |= (t >> 8n) & o;
+      if (((t >> 8n) & p) !== 0n) f |= t;
+      t = (x << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om; t |= (t << 7n) & om;
+      if (((t << 7n) & p) !== 0n) f |= t;
+      t = (x >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om; t |= (t >> 7n) & om;
+      if (((t >> 7n) & p) !== 0n) f |= t;
+      t = (x << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om; t |= (t << 9n) & om;
+      if (((t << 9n) & p) !== 0n) f |= t;
+      t = (x >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om; t |= (t >> 9n) & om;
+      if (((t >> 9n) & p) !== 0n) f |= t;
+      return f;
+    }
+
+    const nbrs = (b) => {
+      const l = b & NH, r = b & NA;
+      return ((l << 1n) | (l << 9n) | (r << 7n) | (b << 8n) | (r >> 1n) | (r >> 9n) | (l >> 7n) | (b >> 8n)) & FULL;
+    };
+
+    function evalPos(p, o) {
+      const mp = popc(movesBB(p, o)), mo = popc(movesBB(o, p));
+      const empty = ~(p | o) & FULL;
+      const pm = popc(nbrs(o) & empty) - popc(nbrs(p) & empty); // potential mobility
+      const dp = popc(p), dn = popc(o);
+      const filled = dp + dn;
+      let wm, wp, wd;
+      if (filled <= 24) { wm = 16; wp = 9; wd = -6; }
+      else if (filled <= 44) { wm = 12; wp = 6; wd = 0; }
+      else { wm = 8; wp = 3; wd = 10; }
+      let s = wm * (mp - mo) + wp * pm + wd * (dp - dn);
+      if (mo === 0 && mp > 0) s += 45;
+      for (let i = 0; i < 4; i++) {
+        const t = TRIS[i];
+        if ((p & t[0]) !== 0n) s += 110 + 14 * popc(p & t[2]) + 8 * ((p & t[1]) !== 0n ? 1 : 0);
+        else if ((o & t[0]) !== 0n) s -= 110 + 14 * popc(o & t[2]) + 8 * ((o & t[1]) !== 0n ? 1 : 0);
+        else {
+          s -= 30 * (((p & t[1]) !== 0n ? 1 : 0) - ((o & t[1]) !== 0n ? 1 : 0));
+          s -= 12 * (popc(p & t[2]) - popc(o & t[2]));
+        }
+      }
+      return s;
+    }
+
+    const finalScore = (p, o) => {
+      const d = popc(p) - popc(o);
+      return d > 0 ? 100000 + d : d < 0 ? -100000 + d : 0;
+    };
+
+    const TT = new Map();
+    const ABORT = { timeout: true };
+    let nodes = 0;
+
+    function search(p, o, depth, alpha, beta, passed) {
+      nodes++;
+      if ((nodes & 255) === 0 && Date.now() - T0 >= LIMIT) throw ABORT;
+      const mv = movesBB(p, o);
+      if (mv === 0n) {
+        if (passed) return finalScore(p, o);
+        return -search(o, p, depth, -beta, -alpha, true);
+      }
+      if (depth <= 0) return evalPos(p, o);
+
+      let key = 0n, ttMove = 0n;
+      const useTT = depth >= 2;
+      if (useTT) {
+        key = (p << 64n) | o;
+        const e = TT.get(key);
+        if (e !== undefined) {
+          if (e[0] >= depth) {
+            const fl = e[2], s = e[1];
+            if (fl === 0) return s;
+            if (fl === 1) { if (s > alpha) alpha = s; }
+            else if (s < beta) beta = s;
+            if (alpha >= beta) return s;
+          }
+          ttMove = e[3];
+        }
+      }
+
+      const kids = [];
+      let m = mv;
+      const deepOrder = depth >= 3;
+      while (m !== 0n) {
+        const b = m & -m;
+        m ^= b;
+        const f = flipsBB(p, o, b);
+        const np = p | f | b;
+        const no = o & ~f;
+        let sc;
+        if (b === ttMove) sc = 1e9;
+        else if ((b & CORNER) !== 0n) sc = 1e7;
+        else if (deepOrder) sc = W[idxOf(b)] - 24 * popc(movesBB(no, np));
+        else sc = W[idxOf(b)];
+        kids.push([sc, b, np, no]);
+      }
+      if (kids.length > 1) kids.sort((a, b2) => b2[0] - a[0]);
+
+      const a0 = alpha;
+      let best = -Infinity, bestB = 0n;
+      for (let i = 0; i < kids.length; i++) {
+        const k = kids[i];
+        const v = -search(k[3], k[2], depth - 1, -beta, -alpha, false);
+        if (v > best) {
+          best = v; bestB = k[1];
+          if (v > alpha) { alpha = v; if (alpha >= beta) break; }
+        }
+      }
+      if (useTT) TT.set(key, [depth, best, best <= a0 ? 2 : (best >= beta ? 1 : 0), bestB]);
+      return best;
+    }
+
+    // ---- root: iterative deepening over engine-provided legal moves ----
+    const roots = legalMoves.map((mv) => {
+      const b = 1n << BigInt(mv.row * 8 + mv.col);
+      const f = flipsBB(P, O, b);
+      return {
+        row: mv.row, col: mv.col, b,
+        np: P | f | b, no: O & ~f,
+        sc: ((b & CORNER) !== 0n ? 1000 : 0) + W[mv.row * 8 + mv.col],
+        val: -Infinity,
+      };
+    });
+    roots.sort((a, b) => b.sc - a.sc);
+    let best = roots[0];
+    const empties = popc(~(P | O) & FULL);
+    const maxD = Math.min(empties, 40);
+
+    try {
+      for (let d = 2; d <= maxD; d++) {
+        if (d > 2 && Date.now() - T0 >= LIMIT * 0.45) break;
+        let alpha = -Infinity;
+        let iterBest = null;
+        let done = 0;
+        for (let i = 0; i < roots.length; i++) {
+          const k = roots[i];
+          let v;
+          try {
+            v = -search(k.no, k.np, d - 1, -Infinity, -alpha, false);
+          } catch (e) {
+            // partial iteration: first move (= previous best) finished, so a move
+            // that beat it at this deeper depth is safe to adopt
+            if (done > 0 && iterBest !== null) best = iterBest;
+            throw e;
+          }
+          k.val = v;
+          done++;
+          if (v > alpha || iterBest === null) { alpha = v; iterBest = k; }
+        }
+        roots.sort((a, b) => b.val - a.val);
+        best = roots[0];
+        if (d >= empties) break; // exact endgame solve finished
+      }
+    } catch (e) {
+      if (e !== ABORT) throw e;
+    }
+    return { row: best.row, col: best.col };
   },
   opus: function decideMove(board, myColor, legalMoves){
     return legalMoves[Math.floor(ARENA_RNG() * legalMoves.length)];
