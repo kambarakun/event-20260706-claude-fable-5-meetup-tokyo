@@ -2,9 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>Othello AI League Arena</title>
+<title>Reversi AI League Arena</title>
 <!--
-  Othello AI League Arena — 単一HTMLファイル。ダブルクリックで起動。外部依存ゼロ。
+  Reversi AI League Arena — 単一HTMLファイル。ダブルクリックで起動。外部依存ゼロ。
 
   AIの貼り込み方法:
     下のscript要素内の PLAYERS の各スロット (fable / opus / sonnet / haiku) の関数を、
@@ -48,7 +48,7 @@
 </style>
 </head>
 <body>
-<h1>Othello AI League Arena</h1>
+<h1>Reversi AI League Arena</h1>
 <div><span id="testSummary"></span></div>
 <div id="selftests"></div>
 <div id="seedRow">
@@ -435,7 +435,7 @@ const PLAYERS = {
       NEIGH[pos] = nb;
     }
 
-    // 静的評価用の重み行列(標準的なオセロ位置価値)
+    // 静的評価用の重み行列(標準的なリバーシ位置価値)
     const V = [
       20, -3, 11, 8, 8, 11, -3, 20,
       -3, -7, -4, 1, 1, -4, -7, -3,
